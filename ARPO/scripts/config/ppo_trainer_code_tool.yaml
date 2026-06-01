@@ -1,0 +1,19 @@
+defaults:
+  - ppo_trainer_dr
+  - _self_
+
+actor_rollout_ref:
+  rollout:
+    tools:
+      call_limit: 6
+      max_workers: 64
+      timeout: 120
+      retry_count: 3
+      verbose_logging: true
+      fail_on_error: true
+      tool_instances:
+        python:
+          class_path: verl.workers.rollout.tools.python_tool.PythonTool
+          params:
+            conda_path: /opt/miniconda3
+            conda_env: zhouyz
