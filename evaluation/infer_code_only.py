@@ -17,6 +17,7 @@ from typing import Any
 
 sys.path.append(os.getcwd())
 
+import httpx
 from openai import AsyncOpenAI
 from tqdm.asyncio import tqdm as async_tqdm
 from transformers import AutoTokenizer
@@ -124,7 +125,12 @@ class CodeOnlyRunner:
         if len(api_keys) != len(args.endpoints):
             raise ValueError("len(api_keys) must match len(endpoints)")
         self.clients = [
-            AsyncOpenAI(base_url=endpoint, api_key=api_key)
+            AsyncOpenAI(
+                base_url=endpoint,
+                api_key=api_key or "EMPTY",
+                default_headers={"Authorization": f"Bearer {api_key or 'EMPTY'}"},
+                http_client=httpx.AsyncClient(trust_env=False),
+            )
             for endpoint, api_key in zip(args.endpoints, api_keys)
         ]
         self.client_lock = asyncio.Lock()
