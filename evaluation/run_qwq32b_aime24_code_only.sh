@@ -7,6 +7,8 @@ echo "Switched to directory: ${SCRIPT_DIR}"
 
 mkdir -p logs
 export PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH:-}"
+export NO_PROXY="${NO_PROXY:-localhost,127.0.0.1,::1}"
+export no_proxy="${no_proxy:-localhost,127.0.0.1,::1}"
 
 CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/config/qwq32b_aime24_code_only.env}"
 if [[ -f "${CONFIG_FILE}" ]]; then
