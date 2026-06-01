@@ -18,6 +18,7 @@ else
 fi
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
+CODE_TOOL_PYTHON_BIN="${CODE_TOOL_PYTHON_BIN:-${PYTHON_BIN}}"
 OUTPUT_PATH="${OUTPUT_PATH:-outputs/qwq32b_aime24_code_only}"
 DATASET_NAME="${DATASET_NAME:-aime24}"
 TURNS="${TURNS:-1}"
@@ -38,8 +39,7 @@ INFER_CMD=(
     --max_tokens "${MAX_TOKENS}"
     --top_p "${TOP_P}"
     --repetition_penalty "${REPETITION_PENALTY}"
-    --conda_path "${CONDA_PATH}"
-    --conda_env "${CONDA_ENV}"
+    --python_bin "${CODE_TOOL_PYTHON_BIN}"
     --python_max_concurrent "${PYTHON_MAX_CONCURRENT}"
     --python_timeout "${PYTHON_TIMEOUT}"
     --max_python_times "${MAX_PYTHON_TIMES}"

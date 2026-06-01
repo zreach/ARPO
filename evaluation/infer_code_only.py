@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import asyncio.subprocess
+import ast
 import hashlib
 import json
 import os
 import re
 import sys
 import time
+from asyncio import BoundedSemaphore
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +22,6 @@ from tqdm.asyncio import tqdm as async_tqdm
 from transformers import AutoTokenizer
 
 from src.data_loader import DataLoader
-from src.tools.python_tool import PythonTool
 from src.utils import extract_answer
 
 
@@ -58,12 +60,61 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top_p", type=float, default=0.95)
     parser.add_argument("--repetition_penalty", type=float, default=1.05)
 
-    parser.add_argument("--conda_path", type=str, default="/opt/miniconda3")
-    parser.add_argument("--conda_env", type=str, default="zhouyz")
+    parser.add_argument("--python_bin", type=str, default=sys.executable)
     parser.add_argument("--python_max_concurrent", type=int, default=32)
     parser.add_argument("--python_timeout", type=int, default=120)
     parser.add_argument("--max_python_times", type=int, default=5)
     return parser.parse_args()
+
+
+class DirectPythonTool:
+    def __init__(self, python_bin: str, max_concurrent: int = 10):
+        self.python_bin = python_bin
+        self.semaphore = BoundedSemaphore(max_concurrent)
+
+    async def execute(self, code: str, timeout: int = 120) -> str:
+        async with self.semaphore:
+            code = self._preprocess_code(code)
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    self.python_bin,
+                    "-c",
+                    code,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                try:
+                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    return "Execution Timeout"
+                if proc.returncode == 0:
+                    return stdout.decode().strip()
+                return stderr.decode().strip()
+            except Exception as exc:
+                return f"Error: {exc}"
+
+    def _preprocess_code(self, code: str) -> str:
+        try:
+            tree = ast.parse(code)
+            if tree.body and isinstance(tree.body[-1], ast.Expr):
+                last_expr = tree.body[-1]
+                if not (
+                    isinstance(last_expr.value, ast.Call)
+                    and isinstance(last_expr.value.func, ast.Name)
+                    and last_expr.value.func.id == "print"
+                ):
+                    tree.body[-1] = ast.Expr(
+                        value=ast.Call(
+                            func=ast.Name(id="print", ctx=ast.Load()),
+                            args=[last_expr.value],
+                            keywords=[],
+                        )
+                    )
+                    code = ast.unparse(tree)
+        except Exception:
+            pass
+        return code
 
 
 class CodeOnlyRunner:
@@ -79,9 +130,8 @@ class CodeOnlyRunner:
         self.client_lock = asyncio.Lock()
         self.next_client = 0
         self.tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
-        self.python_tool = PythonTool(
-            conda_path=args.conda_path,
-            conda_env=args.conda_env,
+        self.python_tool = DirectPythonTool(
+            python_bin=args.python_bin,
             max_concurrent=args.python_max_concurrent,
         )
 
