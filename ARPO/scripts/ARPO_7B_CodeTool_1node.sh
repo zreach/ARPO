@@ -37,8 +37,15 @@ PPO_MINI_BATCH_SIZE="${PPO_MINI_BATCH_SIZE:-16}"
 MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1536}"
 MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-4096}"
 
-TRAIN_FILES="${TRAIN_FILES:-${ARPO_DIR}/rl_datasets/train_10k.parquet}"
-VALID_FILES="${VALID_FILES:-${ARPO_DIR}/rl_datasets/valid.parquet}"
+SYSTEM_PROMPT_PATH="${SYSTEM_PROMPT_PATH:-${ARPO_DIR}/scripts/prompts/system_prompt_code_only.txt}"
+SOURCE_TRAIN_FILES="${SOURCE_TRAIN_FILES:-${ARPO_DIR}/rl_datasets/train_10k.parquet}"
+SOURCE_VALID_FILES="${SOURCE_VALID_FILES:-${ARPO_DIR}/rl_datasets/valid.parquet}"
+CODE_ONLY_DATA_DIR="${CODE_ONLY_DATA_DIR:-${ARPO_DIR}/rl_datasets/code_only}"
+TRAIN_FILES="${TRAIN_FILES:-${CODE_ONLY_DATA_DIR}/train.parquet}"
+VALID_FILES="${VALID_FILES:-${CODE_ONLY_DATA_DIR}/valid.parquet}"
+REBUILD_CODE_ONLY_DATA="${REBUILD_CODE_ONLY_DATA:-False}"
+CODE_ONLY_ABILITY="${CODE_ONLY_ABILITY:-math}"
+CODE_ONLY_FALLBACK_VAL_SIZE="${CODE_ONLY_FALLBACK_VAL_SIZE:-256}"
 
 # ============================ Model Configuration ============================
 ACTOR_MODEL_PATH="${ACTOR_MODEL_PATH:-/workspace/hf/Qwen/Qwen2.5-7B-Instruct}"
@@ -74,6 +81,20 @@ TRAINER_LOGGER="${TRAINER_LOGGER:-[console]}"
 SAVE_PATH="${SAVE_PATH:-${ARPO_DIR}/checkpoints/${EXPERIMENT_NAME}}"
 ROLLOUT_SAVE_PATH="${ROLLOUT_SAVE_PATH:-${SAVE_PATH}/rollout}"
 mkdir -p "${SAVE_PATH}" "${ROLLOUT_SAVE_PATH}"
+
+# Build the default code-only dataset once from ARPO's mixed train_10k data.
+if [[ "${REBUILD_CODE_ONLY_DATA}" == "True" || "${REBUILD_CODE_ONLY_DATA}" == "true" || ! -f "${TRAIN_FILES}" || ! -f "${VALID_FILES}" ]]; then
+    "${PYTHON_BIN}" "${ARPO_DIR}/scripts/prepare_code_only_rl_data.py" \
+        --train-source "${SOURCE_TRAIN_FILES}" \
+        --train-target "${TRAIN_FILES}" \
+        --val-source "${SOURCE_VALID_FILES}" \
+        --val-target "${VALID_FILES}" \
+        --system-prompt "${SYSTEM_PROMPT_PATH}" \
+        --prompt-key "${PROMPT_KEY}" \
+        --ability "${CODE_ONLY_ABILITY}" \
+        --fallback-val-size "${CODE_ONLY_FALLBACK_VAL_SIZE}" \
+        --summary "${CODE_ONLY_DATA_DIR}/summary.json"
+fi
 
 # ============================ Start Training ============================
 "${PYTHON_BIN}" -m verl.trainer.main_ppo \
