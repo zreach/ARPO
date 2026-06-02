@@ -1,24 +1,30 @@
 import ast
 import subprocess
-from typing import Tuple
+from typing import Optional, Tuple
 
 from verl.workers.agent.tools.base_tool import BaseTool
 
 
 class PythonTool(BaseTool):
-    """Python code execution tool, using local conda environment"""
+    """Python code execution tool."""
     
-    def __init__(self, conda_path: str, conda_env: str):
+    def __init__(self, conda_path: Optional[str] = None, conda_env: Optional[str] = None, python_path: Optional[str] = None):
         """
         Initialize Python tool
         
         Args:
-            conda_path: conda installation path
-            conda_env: conda environment name
+            conda_path: conda installation path, kept for backwards compatibility
+            conda_env: conda environment name, kept for backwards compatibility
+            python_path: direct path to the Python executable
         """
+        if python_path is not None:
+            self.python_path = python_path
+        elif conda_path is not None and conda_env is not None:
+            self.python_path = f"{conda_path}/envs/{conda_env}/bin/python"
+        else:
+            self.python_path = "python"
         self.conda_path = conda_path
         self.conda_env = conda_env
-        self.python_path = f"{conda_path}/envs/{conda_env}/bin/python"
 
     @property
     def name(self) -> str:
@@ -142,5 +148,4 @@ print(f"Value at x=1, y=2: {result}")
 
 if __name__ == "__main__":
     _test()
-
 

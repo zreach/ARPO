@@ -76,6 +76,7 @@ class vLLMRolloutWithTools(vLLMRollout):
     """
 
     def __init__(self, model_path: str, config: DictConfig, tokenizer, model_hf_config, **kwargs):
+        self.executor = None
         super().__init__(model_path, config, tokenizer, model_hf_config, **kwargs)
         self.tokenizer = tokenizer
 
@@ -121,7 +122,9 @@ class vLLMRolloutWithTools(vLLMRollout):
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_tool_workers)
 
     def __del__(self):
-        self.executor.shutdown(wait=False)
+        executor = getattr(self, "executor", None)
+        if executor is not None:
+            executor.shutdown(wait=False)
 
     def _extract_content(self, text: str, tag: str) -> str:
         """Extracts content from within the last <tag>...</tag> block."""

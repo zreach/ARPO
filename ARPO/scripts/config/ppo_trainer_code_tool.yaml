@@ -15,5 +15,4 @@ actor_rollout_ref:
         python:
           class_path: verl.workers.rollout.tools.python_tool.PythonTool
           params:
-            conda_path: /opt/miniconda3
-            conda_env: zhouyz
+            python_path: python

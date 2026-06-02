@@ -8,7 +8,7 @@ cd "${ARPO_DIR}"
 # ============================ Environment Setup ============================
 export PYTHONUNBUFFERED=1
 export HYDRA_FULL_ERROR=1
-export VLLM_ATTENTION_BACKEND="${VLLM_ATTENTION_BACKEND:-XFORMERS}"
+export VLLM_ATTENTION_BACKEND="${VLLM_ATTENTION_BACKEND:-FLASH_ATTN}"
 export VERL_LOGGING_LEVEL="${VERL_LOGGING_LEVEL:-INFO}"
 export MKL_SERVICE_FORCE_INTEL="${MKL_SERVICE_FORCE_INTEL:-1}"
 export MKL_THREADING_LAYER="${MKL_THREADING_LAYER:-GNU}"
@@ -16,10 +16,9 @@ export RAY_memory_usage_threshold="${RAY_memory_usage_threshold:-0.8}"
 export RAY_memory_monitor_refresh_ms="${RAY_memory_monitor_refresh_ms:-0}"
 export PYTHONPATH="${ARPO_DIR}/verl_arpo_entropy:${PYTHONPATH:-}"
 
-# Use the same Python environment for launching training and for the code tool.
-CONDA_PATH="${CONDA_PATH:-/opt/miniconda3}"
-CONDA_ENV="${CONDA_ENV:-zhouyz}"
-PYTHON_BIN="${PYTHON_BIN:-${CONDA_PATH}/envs/${CONDA_ENV}/bin/python}"
+# Use the same Python executable for launching training and for the code tool by default.
+PYTHON_BIN="${PYTHON_BIN:-python}"
+CODE_TOOL_PYTHON_BIN="${CODE_TOOL_PYTHON_BIN:-${PYTHON_BIN}}"
 
 # ============================ Basic Configuration ============================
 PROJECT_NAME="${PROJECT_NAME:-reasoning_code_tool}"
@@ -42,7 +41,7 @@ TRAIN_FILES="${TRAIN_FILES:-${ARPO_DIR}/rl_datasets/train_10k.parquet}"
 VALID_FILES="${VALID_FILES:-${ARPO_DIR}/rl_datasets/valid.parquet}"
 
 # ============================ Model Configuration ============================
-ACTOR_MODEL_PATH="${ACTOR_MODEL_PATH:?Set ACTOR_MODEL_PATH to the local or HF path of the policy model.}"
+ACTOR_MODEL_PATH="${ACTOR_MODEL_PATH:-/workspace/hf/Qwen/Qwen2.5-7B-Instruct}"
 
 # ============================ Rollout Configuration ==========================
 ROLLOUT_NAME="${ROLLOUT_NAME:-vllm}"
@@ -115,8 +114,7 @@ mkdir -p "${SAVE_PATH}" "${ROLLOUT_SAVE_PATH}"
     actor_rollout_ref.rollout.tools.timeout="${TOOL_TIMEOUT}" \
     actor_rollout_ref.rollout.tools.retry_count="${TOOL_RETRY_COUNT}" \
     ~actor_rollout_ref.rollout.tools.tool_instances.search \
-    actor_rollout_ref.rollout.tools.tool_instances.python.params.conda_path="${CONDA_PATH}" \
-    actor_rollout_ref.rollout.tools.tool_instances.python.params.conda_env="${CONDA_ENV}" \
+    actor_rollout_ref.rollout.tools.tool_instances.python.params.python_path="${CODE_TOOL_PYTHON_BIN}" \
     actor_rollout_ref.rollout.multi_turn.enable="${ENABLE_MULTI_TURN}" \
     actor_rollout_ref.ref.log_prob_max_token_len_per_gpu="$((4 * (MAX_PROMPT_LENGTH + MAX_RESPONSE_LENGTH)))" \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
