@@ -1,0 +1,22 @@
+{
+  "train_source": "/workspace/ARPO/ARPO/rl_datasets/train_10k.parquet",
+  "train_target": "/workspace/ARPO/ARPO/rl_datasets/code_only/train.parquet",
+  "val_source": "/workspace/ARPO/ARPO/rl_datasets/valid.parquet",
+  "val_target": "/workspace/ARPO/ARPO/rl_datasets/code_only/valid.parquet",
+  "prompt_key": "prompt",
+  "ability": "math",
+  "train": {
+    "input_rows": 10000,
+    "kept_rows": 5000,
+    "dropped_rows": 5000,
+    "ability_matched_rows": 5000,
+    "user_prompt_search_rows": 0
+  },
+  "val": {
+    "input_rows": 180,
+    "kept_rows": 100,
+    "dropped_rows": 80,
+    "ability_matched_rows": 100,
+    "user_prompt_search_rows": 0
+  }
+}

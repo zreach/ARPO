@@ -1,0 +1,15 @@
+{
+    "em": 0.0,
+    "acc": 0.0,
+    "f1": 0.0,
+    "math_equal": 0.0,
+    "num_valid_answer": "30 of 30",
+    "tool_productivity": 0.0,
+    "average_datas_used_tool_number": 0.0,
+    "tool_call": 0.0,
+    "average_python_calls": 0.0,
+    "average_search_calls": 0.0,
+    "llm_equal": 0.0,
+    "m1m2": 0.0,
+    "datetime": "2026-06-02 15:28:09"
+}

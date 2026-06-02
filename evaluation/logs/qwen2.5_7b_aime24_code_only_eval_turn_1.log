@@ -1,0 +1,36 @@
+Model output file path: outputs/qwen3_8b_aime24_code_only/aime24/aime24_output_1.json
+Loading data...
+Data loading completed. Total 30 samples. Time taken: 0.00 seconds
+Detailed metrics path: outputs/qwen3_8b_aime24_code_only/aime24/aime24_output_1_metrics.json
+Overall metrics path: outputs/qwen3_8b_aime24_code_only/aime24/aime24_output_1_metrics_overall.json
+Starting evaluation of 30 samples, task type: math
+Evaluating samples:   0%|          | 0/30 [00:00<?, ?it/s]Evaluating samples: 100%|██████████| 30/30 [00:00<00:00, 29481.99it/s]
+Evaluation complete. Results saved.
+Detailed metrics: outputs/qwen3_8b_aime24_code_only/aime24/aime24_output_1_metrics.json
+Overall metrics: outputs/qwen3_8b_aime24_code_only/aime24/aime24_output_1_metrics_overall.json
+EM: 0.0000
+F1: 0.0000
+Valid answers: 30 of 30
+Math Equal: 0.0000
+LLM Equal: 0.0000
+Avg tool calls: 0.00
+Python calls: 0.00
+Search calls: 0.00
+Tool usage rate: 0.00
+Tool productivity (M1*M2): 0.00
+Evaluation completed. Total time: 0.01 seconds
+
+===== Evaluation Summary =====
+em: 0.0000
+acc: 0.0000
+f1: 0.0000
+math_equal: 0.0000
+num_valid_answer: 30 of 30
+tool_productivity: 0.0000
+average_datas_used_tool_number: 0.0000
+tool_call: 0.0000
+average_python_calls: 0.0000
+average_search_calls: 0.0000
+llm_equal: 0.0000
+m1m2: 0.0000
+datetime: 2026-06-02 15:28:09

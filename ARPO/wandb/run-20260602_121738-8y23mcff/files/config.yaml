@@ -1,0 +1,416 @@
+_wandb:
+    value:
+        cli_version: 0.26.1
+        e:
+            8c1nip9iuimd7i9il0faqx029gx44vvy:
+                args:
+                    - --node-ip-address=127.0.0.1
+                    - --node-manager-port=39213
+                    - --object-store-name=/tmp/ray/session_2026-06-02_12-15-59_658247_2541390/sockets/plasma_store
+                    - --raylet-name=/tmp/ray/session_2026-06-02_12-15-59_658247_2541390/sockets/raylet
+                    - --redis-address=None
+                    - --metrics-agent-port=54244
+                    - --logging-rotate-bytes=536870912
+                    - --logging-rotate-backup-count=5
+                    - --runtime-env-agent-port=51310
+                    - --gcs-address=127.0.0.1:63940
+                    - --session-name=session_2026-06-02_12-15-59_658247_2541390
+                    - --temp-dir=/tmp/ray
+                    - --webui=127.0.0.1:8265
+                    - --cluster-id=9b8335ee71578dca9bcad3eeed65a0254fd0a8e8f219d4194141d82c
+                    - --startup-token=170
+                    - --worker-launch-time-ms=1780373763783
+                    - --node-id=d6908a6c1369f024c41e21405648d98577ecf4b664dfbe1b74da5ef9
+                    - --runtime-env-hash=-1624044036
+                cpu_count: 96
+                cpu_count_logical: 192
+                cudaVersion: "12.2"
+                disk:
+                    /:
+                        total: "3779301580800"
+                        used: "1676030595072"
+                email: zr201830099@gmail.com
+                executable: /root/miniconda3/envs/va/bin/python
+                git:
+                    commit: 410538b8a13e92ae0c4defb96b00da85bb66cdcc
+                    remote: https://github.com/zreach/ARPO.git
+                gpu: NVIDIA H20
+                gpu_count: 8
+                gpu_nvidia:
+                    - architecture: Hopper
+                      cudaCores: 9984
+                      memoryTotal: "102625181696"
+                      name: NVIDIA H20
+                      uuid: GPU-7d03b9aa-178b-8069-9e70-fd19c369da98
+                    - architecture: Hopper
+                      cudaCores: 9984
+                      memoryTotal: "102625181696"
+                      name: NVIDIA H20
+                      uuid: GPU-c858741d-4d89-bf84-6bd1-4db5f69ac107
+                    - architecture: Hopper
+                      cudaCores: 9984
+                      memoryTotal: "102625181696"
+                      name: NVIDIA H20
+                      uuid: GPU-3ccdf6b6-3b4e-e756-2244-e518f0b03af7
+                    - architecture: Hopper
+                      cudaCores: 9984
+                      memoryTotal: "102625181696"
+                      name: NVIDIA H20
+                      uuid: GPU-f9ccc833-318c-b9f6-be1b-fef0330ec6ee
+                    - architecture: Hopper
+                      cudaCores: 9984
+                      memoryTotal: "102625181696"
+                      name: NVIDIA H20
+                      uuid: GPU-8a70b0d1-bc9b-30d2-ff46-5e968b939053
+                    - architecture: Hopper
+                      cudaCores: 9984
+                      memoryTotal: "102625181696"
+                      name: NVIDIA H20
+                      uuid: GPU-bb79c474-9d88-ed74-8c75-97f6e23e5757
+                    - architecture: Hopper
+                      cudaCores: 9984
+                      memoryTotal: "102625181696"
+                      name: NVIDIA H20
+                      uuid: GPU-eb3243de-abea-5969-94b2-ee5d50f2107f
+                    - architecture: Hopper
+                      cudaCores: 9984
+                      memoryTotal: "102625181696"
+                      name: NVIDIA H20
+                      uuid: GPU-8b1ed6ad-a2d9-79ac-1856-078e325615cb
+                host: g340-cd51-4900-247f-6d0d-61e-3921
+                memory:
+                    total: "2163316105216"
+                os: Linux-5.15.152.bsk.7-amd64-x86_64-with-glibc2.36
+                program: /root/miniconda3/envs/va/lib/python3.12/site-packages/ray/_private/workers/default_worker.py
+                python: CPython 3.12.0
+                root: /workspace/ARPO/ARPO
+                startedAt: "2026-06-02T04:17:38.275986Z"
+                writerId: 8c1nip9iuimd7i9il0faqx029gx44vvy
+        m: []
+        python_version: 3.12.0
+        t:
+            "1":
+                - 1
+                - 11
+                - 30
+                - 41
+                - 49
+                - 50
+                - 51
+                - 71
+                - 95
+                - 98
+                - 105
+            "2":
+                - 1
+                - 11
+                - 30
+                - 41
+                - 49
+                - 50
+                - 51
+                - 71
+                - 95
+                - 98
+                - 105
+            "3":
+                - 2
+                - 13
+                - 16
+                - 41
+            "4": 3.12.0
+            "5": 0.26.1
+            "6": 4.57.3
+            "12": 0.26.1
+            "13": linux-x86_64
+actor_rollout_ref:
+    value:
+        actor:
+            checkpoint:
+                contents:
+                    - model
+                    - optimizer
+                    - extra
+            clip_ratio: 0.2
+            clip_ratio_c: 3
+            clip_ratio_high: 0.2
+            clip_ratio_low: 0.2
+            entropy_coeff: 0
+            fsdp_config:
+                fsdp_size: -1
+                offload_policy: false
+                optimizer_offload: false
+                param_offload: false
+                reshard_after_forward: true
+                wrap_policy:
+                    min_num_params: 0
+            grad_clip: 1
+            kl_loss_coef: 0
+            kl_loss_type: low_var_kl
+            loss_agg_mode: token-mean
+            optim:
+                lr: 1e-06
+                lr_warmup_steps: -1
+                lr_warmup_steps_ratio: 0
+                min_lr_ratio: 0
+                num_cycles: 0.5
+                total_training_steps: 156
+                warmup_style: constant
+                weight_decay: 0.01
+            ppo_epochs: 1
+            ppo_max_token_len_per_gpu: 11264
+            ppo_micro_batch_size: null
+            ppo_micro_batch_size_per_gpu: null
+            ppo_mini_batch_size: 16
+            shuffle: false
+            strategy: fsdp
+            ulysses_sequence_parallel_size: 1
+            use_dynamic_bsz: true
+            use_kl_loss: true
+            use_torch_compile: true
+        hybrid_engine: true
+        model:
+            enable_activation_offload: false
+            enable_gradient_checkpointing: true
+            external_lib: null
+            lora_alpha: 16
+            lora_rank: 0
+            path: /workspace/hf/Qwen/Qwen2.5-7B-Instruct
+            target_modules: all-linear
+            trust_remote_code: false
+            use_fused_kernels: false
+            use_liger: false
+            use_remove_padding: true
+            use_shm: false
+        ref:
+            fsdp_config:
+                param_offload: true
+                reshard_after_forward: true
+                wrap_policy:
+                    min_num_params: 0
+            log_prob_max_token_len_per_gpu: 22528
+            log_prob_micro_batch_size: null
+            log_prob_micro_batch_size_per_gpu: null
+            log_prob_use_dynamic_bsz: true
+            strategy: fsdp
+            ulysses_sequence_parallel_size: 1
+            use_torch_compile: true
+        rollout:
+            beam_size: 2
+            branch_probability: 0.5
+            chat_scheduler: null
+            disable_log_stats: true
+            do_sample: true
+            dtype: bfloat16
+            enable_chunked_prefill: true
+            enforce_eager: true
+            engine_kwargs:
+                sglang:
+                    attention_backend: null
+                vllm:
+                    swap_space: null
+            entropy_weight: 0.2
+            free_cache_engine: true
+            gpu_memory_utilization: 0.7
+            ignore_eos: false
+            initial_rollouts: 8
+            layered_summon: false
+            load_format: dummy_dtensor
+            log_prob_max_token_len_per_gpu: 22528
+            log_prob_micro_batch_size: null
+            log_prob_micro_batch_size_per_gpu: null
+            log_prob_use_dynamic_bsz: true
+            max_model_len: null
+            max_num_batched_tokens: 25000
+            max_num_seqs: 1024
+            mode: sync_with_tool
+            multi_turn:
+                enable: false
+                format: chatml
+                max_turns: null
+                tool_config_path: null
+            "n": 16
+            name: vllm
+            prompt_length: 1536
+            response_length: 4096
+            temperature: 1
+            tensor_model_parallel_size: 1
+            tools:
+                call_limit: 6
+                fail_on_error: true
+                max_workers: 64
+                retry_count: 3
+                timeout: 120
+                tool_instances:
+                    python:
+                        class_path: verl.workers.rollout.tools.python_tool.PythonTool
+                        params:
+                            conda_env: verl
+                            conda_path: <your_conda_path>
+                            python_path: python
+                verbose_logging: true
+            top_k: -1
+            top_p: 1
+            use_fire_sampling: false
+            val_kwargs:
+                do_sample: false
+                "n": 1
+                temperature: 0
+                top_k: -1
+                top_p: 1
+algorithm:
+    value:
+        adv_estimator: grpo
+        gamma: 1
+        kl_ctrl:
+            horizon: 10000
+            kl_coef: 0
+            target_kl: 0.1
+            type: fixed
+        kl_penalty: kl
+        lam: 1
+        norm_adv_by_std_in_grpo: true
+        pf_ppo:
+            reweight_method: pow
+            weight_pow: 2
+        use_kl_in_reward: false
+        use_pf_ppo: false
+critic:
+    value:
+        checkpoint:
+            contents:
+                - model
+                - optimizer
+                - extra
+        cliprange_value: 0.5
+        forward_max_token_len_per_gpu: 32768
+        forward_micro_batch_size: null
+        forward_micro_batch_size_per_gpu: null
+        grad_clip: 1
+        loss_agg_mode: token-mean
+        model:
+            enable_activation_offload: false
+            enable_gradient_checkpointing: true
+            external_lib: null
+            fsdp_config:
+                fsdp_size: -1
+                offload_policy: false
+                optimizer_offload: false
+                param_offload: false
+                reshard_after_forward: true
+                wrap_policy:
+                    min_num_params: 0
+            lora_alpha: 16
+            lora_rank: 0
+            path: ~/models/deepseek-llm-7b-chat
+            target_modules: all-linear
+            tokenizer_path: /workspace/hf/Qwen/Qwen2.5-7B-Instruct
+            trust_remote_code: false
+            use_remove_padding: false
+            use_shm: false
+        optim:
+            lr: 1e-05
+            lr_warmup_steps_ratio: 0
+            min_lr_ratio: null
+            total_training_steps: 156
+            warmup_style: constant
+            weight_decay: 0.01
+        ppo_epochs: 1
+        ppo_max_token_len_per_gpu: 32768
+        ppo_micro_batch_size: null
+        ppo_micro_batch_size_per_gpu: null
+        ppo_mini_batch_size: 16
+        rollout_n: 16
+        shuffle: false
+        strategy: fsdp
+        ulysses_sequence_parallel_size: 1
+        use_dynamic_bsz: true
+custom_reward_function:
+    value:
+        name: compute_score
+        path: /workspace/ARPO/ARPO/verl_arpo_entropy/verl/utils/reward_score/deep_research.py
+data:
+    value:
+        custom_cls:
+            name: null
+            path: null
+        filter_overlong_prompts: false
+        filter_overlong_prompts_workers: 1
+        image_key: images
+        max_prompt_length: 1536
+        max_response_length: 4096
+        prompt_key: prompt
+        return_full_prompt: false
+        return_raw_chat: false
+        return_raw_input_ids: false
+        reward_fn_key: data_source
+        shuffle: true
+        tokenizer: null
+        train_batch_size: 128
+        train_files: /workspace/ARPO/ARPO/rl_datasets/train_10k.parquet
+        truncation: error
+        trust_remote_code: false
+        use_shm: false
+        val_batch_size: null
+        val_files: /workspace/ARPO/ARPO/rl_datasets/valid.parquet
+        video_key: videos
+ray_init:
+    value:
+        num_cpus: null
+reward_model:
+    value:
+        enable: false
+        forward_max_token_len_per_gpu: 32768
+        launch_reward_fn_async: false
+        max_length: null
+        micro_batch_size: null
+        micro_batch_size_per_gpu: null
+        model:
+            external_lib: null
+            fsdp_config:
+                fsdp_size: -1
+                param_offload: false
+                reshard_after_forward: true
+                wrap_policy:
+                    min_num_params: 0
+            input_tokenizer: /workspace/hf/Qwen/Qwen2.5-7B-Instruct
+            path: ~/models/FsfairX-LLaMA3-RM-v0.1
+            trust_remote_code: false
+            use_fused_kernels: false
+            use_remove_padding: false
+            use_shm: false
+        reward_manager: naive
+        sandbox_fusion:
+            max_concurrent: 64
+            url: null
+        strategy: fsdp
+        ulysses_sequence_parallel_size: 1
+        use_dynamic_bsz: true
+trainer:
+    value:
+        balance_batch: true
+        critic_warmup: 0
+        default_hdfs_dir: null
+        default_local_dir: /workspace/ARPO/ARPO/checkpoints/arpo_7b_code_tool_only
+        del_local_ckpt_after_load: false
+        device: cuda
+        experiment_name: arpo_7b_code_tool_only
+        log_val_generations: 0
+        logger:
+            - console
+            - wandb
+        max_actor_ckpt_to_keep: null
+        max_critic_ckpt_to_keep: null
+        n_gpus_per_node: 8
+        nnodes: 1
+        project_name: reasoning_code_tool
+        ray_wait_register_center_timeout: 300
+        resume_from_path: null
+        resume_mode: auto
+        rollout_data_dir: /workspace/ARPO/ARPO/checkpoints/arpo_7b_code_tool_only/rollout
+        save_freq: 5
+        test_freq: 5
+        total_epochs: 2
+        total_training_steps: null
+        val_before_train: false
+        validation_data_dir: null
