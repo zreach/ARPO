@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+
+SEARCH_RE = re.compile(
+    r"(<search>|</search>|\bsearch\b|web\s*search|bing|google|wikipedia|browser|retrieval)",
+    re.IGNORECASE,
+)
 
 
 def read_rows(path: Path) -> list[dict[str, Any]]:
@@ -30,9 +37,48 @@ def to_messages(row: dict[str, Any], system_prompt: str | None) -> list[dict[str
     ]
 
 
-def is_code_only(row: dict[str, Any]) -> bool:
-    text = "\n".join(str(row.get(key, "")) for key in ("instruction", "input", "output")).lower()
-    return "<python>" in text and "<search>" not in text and "</search>" not in text
+def row_text(row: dict[str, Any], include_instruction: bool) -> str:
+    keys = ["input", "output"]
+    if include_instruction:
+        keys.insert(0, "instruction")
+    return "\n".join(str(row.get(key, "")) for key in keys)
+
+
+def has_search_text(text: str) -> bool:
+    return bool(SEARCH_RE.search(text))
+
+
+def is_code_only(row: dict[str, Any], include_instruction: bool) -> bool:
+    text = row_text(row, include_instruction=include_instruction)
+    return "<python>" in text.lower() and not has_search_text(text)
+
+
+def sanitize_extra_info(value: Any) -> Any:
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            if has_search_text(str(key)):
+                continue
+            sanitized = sanitize_extra_info(item)
+            if sanitized is not None:
+                cleaned[key] = sanitized
+        return cleaned
+    if isinstance(value, list):
+        cleaned_list = []
+        for item in value:
+            sanitized = sanitize_extra_info(item)
+            if sanitized is not None:
+                cleaned_list.append(sanitized)
+        return cleaned_list
+    if isinstance(value, str) and has_search_text(value):
+        return None
+    return value
+
+
+def validate_messages(messages: list[dict[str, str]]) -> None:
+    text = "\n".join(message["content"] for message in messages)
+    if has_search_text(text):
+        raise ValueError("Prepared SFT messages still contain search-related text.")
 
 
 def main() -> None:
@@ -46,15 +92,23 @@ def main() -> None:
     args = parser.parse_args()
 
     source = Path(args.source).expanduser()
-    rows = [row for row in read_rows(source) if is_code_only(row)]
-    if not rows:
-        raise ValueError(f"No code-only rows found in {source}")
-
     system_prompt = None
     if args.system_prompt:
         system_prompt = Path(args.system_prompt).expanduser().read_text(encoding="utf-8").strip()
+        if has_search_text(system_prompt):
+            raise ValueError(f"System prompt still contains search-related text: {args.system_prompt}")
 
-    data = [{"messages": to_messages(row, system_prompt), "extra_info": row.get("extra_info", {})} for row in rows]
+    raw_rows = read_rows(source)
+    include_instruction = system_prompt is None
+    rows = [row for row in raw_rows if is_code_only(row, include_instruction=include_instruction)]
+    if not rows:
+        raise ValueError(f"No code-only rows found in {source}")
+
+    data = []
+    for row in rows:
+        messages = to_messages(row, system_prompt)
+        validate_messages(messages)
+        data.append({"messages": messages, "extra_info": sanitize_extra_info(row.get("extra_info", {}))})
     val_size = min(max(args.val_size, 0), len(data))
     val_rows = data[:val_size]
     train_rows = data[val_size:] if val_size else data
@@ -68,6 +122,8 @@ def main() -> None:
 
     summary = {
         "source": str(source),
+        "input_rows": len(raw_rows),
+        "dropped_search_or_non_code_rows": len(raw_rows) - len(rows),
         "total_code_only_rows": len(rows),
         "train_rows": len(train_rows),
         "val_rows": len(val_rows or train_rows[:1]),
