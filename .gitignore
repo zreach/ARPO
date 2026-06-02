@@ -1,3 +1,6 @@
 LLaMA-Factory/arpo_train_sft/dataset/*.jsonl
 LLaMA-Factory/arpo_train_sft/dataset/*.jsonl
 LLaMA-Factory/LLaMA-Factory-backup
+**/__pycache__/
+*.pyc
+*.pyo
