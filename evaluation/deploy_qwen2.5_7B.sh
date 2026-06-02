@@ -1,14 +1,12 @@
-#!/bin/bash
-source < /path/to/your/conda >/bin/activate
-conda activate < your env name >
+#!/usr/bin/env bash
+set -euo pipefail
 
-
-export CUDA_VISIBLE_DEVICES=0,1,2,3
-
-vllm serve your_model_path \
-  --served-model-name Qwen2.5-72B-Instruct \
-  --max-model-len 32768 \
-  --tensor_parallel_size 4 \
-  --gpu-memory-utilization 0.75 \
-  --quantization gptq \
-  --port 8001
+MODEL_PATH="${MODEL_PATH:-/workspace/hf/Qwen/Qwen2.5-7B-Instruct}" \
+SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-Qwen2.5-7B}" \
+PORT="${PORT:-8006}" \
+CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" \
+TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}" \
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-32768}" \
+GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.8}" \
+DTYPE="${DTYPE:-bfloat16}" \
+bash "$(dirname "$0")/vllm_scripts/vllm_launch_qwen2.5_7b_code_only.sh"
