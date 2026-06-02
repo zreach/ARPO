@@ -24,6 +24,22 @@ CODE_TOOL_PYTHON_BIN="${CODE_TOOL_PYTHON_BIN:-${PYTHON_BIN}}"
 OUTPUT_PATH="${OUTPUT_PATH:-outputs/qwen2.5_7b_aime24_code_only}"
 DATASET_NAME="${DATASET_NAME:-aime24}"
 TURNS="${TURNS:-1}"
+CHECK_ENDPOINT_READY="${CHECK_ENDPOINT_READY:-true}"
+
+if [[ "${CHECK_ENDPOINT_READY}" == "true" ]]; then
+    FIRST_API_KEY="${API_KEYS:-EMPTY}"
+    FIRST_API_KEY="${FIRST_API_KEY%% *}"
+    for endpoint in ${ENDPOINTS}; do
+        models_url="${endpoint%/}/models"
+        echo "Checking vLLM endpoint: ${models_url}"
+        if ! curl --noproxy '*' -fsS -H "Authorization: Bearer ${FIRST_API_KEY}" "${models_url}" >/dev/null; then
+            echo "vLLM endpoint is not reachable: ${models_url}" >&2
+            echo "Start it first with: bash ${SCRIPT_DIR}/deploy_qwen2.5_7B.sh" >&2
+            echo "Then verify with: curl --noproxy '*' -H 'Authorization: Bearer ${FIRST_API_KEY}' ${models_url}" >&2
+            exit 1
+        fi
+    done
+fi
 
 INFER_CMD=(
     "${PYTHON_BIN}" -u infer_code_only.py
