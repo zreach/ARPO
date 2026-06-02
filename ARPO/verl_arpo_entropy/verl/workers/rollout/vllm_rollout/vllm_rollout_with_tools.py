@@ -269,6 +269,7 @@ class vLLMRolloutWithTools(vLLMRollout):
                 logger.debug(f"rollouts_per_sample: {rollouts_per_sample}")
                 logger.debug(f"active_indices: {active_indices}")
                 logger.debug(f"active_prompts: {active_prompts}")
+                vllm_inputs = [{"prompt_token_ids": prompt} for prompt in active_prompts]
 
                 # Update max_tokens for each active sample
                 with self.update_sampling_params(
@@ -279,7 +280,7 @@ class vLLMRolloutWithTools(vLLMRollout):
                     logprobs = self.logprobs
                 ):
                     outputs = self.inference_engine.generate(
-                        prompt_token_ids=active_prompts,
+                        prompts=vllm_inputs,
                         sampling_params=self.sampling_params,
                         use_tqdm=False
                     )
