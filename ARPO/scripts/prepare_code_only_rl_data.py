@@ -31,11 +31,13 @@ def as_messages(prompt: Any) -> list[dict[str, Any]]:
     return [dict(message) if isinstance(message, dict) else {"role": "user", "content": str(message)} for message in prompt]
 
 
-def prompt_text(prompt: Any) -> str:
+def prompt_text(prompt: Any, include_system: bool = True) -> str:
     try:
         messages = as_messages(prompt)
     except TypeError:
         return str(prompt)
+    if not include_system:
+        messages = [message for message in messages if message.get("role") != "system"]
     return "\n".join(str(message.get("content", "")) for message in messages)
 
 
@@ -64,11 +66,9 @@ def normalize_value(value: Any) -> str:
 
 
 def looks_like_search_row(row: pd.Series, prompt_key: str) -> bool:
-    fields = [prompt_text(row[prompt_key])]
-    for key in ("data_source", "ability", "extra_info"):
-        if key in row:
-            fields.append(str(row[key]))
-    text = "\n".join(fields).lower()
+    # The original ARPO system prompt can mention search for every row. Ignore
+    # that old system message because it is replaced with a pure code prompt.
+    text = prompt_text(row[prompt_key], include_system=False).lower()
     return any(marker in text for marker in SEARCH_MARKERS)
 
 
@@ -85,6 +85,11 @@ def filter_frame(df: pd.DataFrame, prompt_key: str, ability: str, system_prompt:
         raise KeyError(f"Missing prompt column {prompt_key!r}; available columns: {list(df.columns)}")
 
     before = len(df)
+    search_mask = df.apply(lambda row: looks_like_search_row(row, prompt_key), axis=1)
+    if "ability" in df.columns:
+        ability_mask = df["ability"].apply(lambda value: normalize_value(value) == ability.lower())
+    else:
+        ability_mask = pd.Series([True] * len(df), index=df.index)
     keep_mask = df.apply(lambda row: keep_code_only_row(row, prompt_key, ability), axis=1)
     kept = df[keep_mask].copy()
     dropped = before - len(kept)
@@ -93,7 +98,13 @@ def filter_frame(df: pd.DataFrame, prompt_key: str, ability: str, system_prompt:
     if "extra_info" in kept.columns:
         kept["extra_info"] = kept["extra_info"].apply(patch_extra_info)
 
-    return kept, {"input_rows": before, "kept_rows": len(kept), "dropped_rows": dropped}
+    return kept, {
+        "input_rows": before,
+        "kept_rows": len(kept),
+        "dropped_rows": dropped,
+        "ability_matched_rows": int(ability_mask.sum()),
+        "user_prompt_search_rows": int(search_mask.sum()),
+    }
 
 
 def write_parquet(df: pd.DataFrame, path: Path) -> None:
@@ -122,7 +133,15 @@ def main() -> None:
     train_code_only, train_stats = filter_frame(train_df, args.prompt_key, args.ability, system_prompt)
 
     if len(train_code_only) == 0:
-        raise ValueError("No code-only train rows remained after filtering.")
+        ability_counts = (
+            train_df["ability"].astype(str).value_counts().head(20).to_dict()
+            if "ability" in train_df.columns
+            else {}
+        )
+        raise ValueError(
+            "No code-only train rows remained after filtering. "
+            f"stats={train_stats}, ability_counts={ability_counts}"
+        )
 
     val_stats: dict[str, int]
     val_source = Path(args.val_source).expanduser() if args.val_source else None
