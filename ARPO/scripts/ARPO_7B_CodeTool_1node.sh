@@ -75,7 +75,7 @@ CUSTOM_REWARD_FUNCTION_NAME="${CUSTOM_REWARD_FUNCTION_NAME:-compute_score}"
 TOTAL_EPOCHS="${TOTAL_EPOCHS:-2}"
 SAVE_FREQ="${SAVE_FREQ:-5}"
 TEST_FREQ="${TEST_FREQ:-5}"
-TRAINER_LOGGER="${TRAINER_LOGGER:-[console]}"
+TRAINER_LOGGER="${TRAINER_LOGGER:-[console, wandb]}"
 
 # ============================ Path Configuration ============================
 SAVE_PATH="${SAVE_PATH:-${ARPO_DIR}/checkpoints/${EXPERIMENT_NAME}}"
