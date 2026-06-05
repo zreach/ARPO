@@ -63,6 +63,11 @@ TOOL_MAX_WORKERS="${TOOL_MAX_WORKERS:-64}"
 TOOL_TIMEOUT="${TOOL_TIMEOUT:-120}"
 TOOL_RETRY_COUNT="${TOOL_RETRY_COUNT:-3}"
 
+# Optional lightweight on-policy distillation loss. Disabled by default.
+USE_OPD_LOSS="${USE_OPD_LOSS:-False}"
+OPD_LOSS_COEF="${OPD_LOSS_COEF:-0.0}"
+OPD_POSITIVE_ONLY="${OPD_POSITIVE_ONLY:-True}"
+
 # Keep ARPO's old multi_turn switch off. Tool execution is handled by sync_with_tool.
 ENABLE_MULTI_TURN="${ENABLE_MULTI_TURN:-False}"
 
@@ -118,6 +123,9 @@ fi
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.0 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
+    ++actor_rollout_ref.actor.use_opd_loss="${USE_OPD_LOSS}" \
+    ++actor_rollout_ref.actor.opd_loss_coef="${OPD_LOSS_COEF}" \
+    ++actor_rollout_ref.actor.opd_positive_only="${OPD_POSITIVE_ONLY}" \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
     actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu="$((4 * (MAX_PROMPT_LENGTH + MAX_RESPONSE_LENGTH)))" \

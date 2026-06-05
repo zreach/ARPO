@@ -322,10 +322,11 @@ class DataParallelPPOActor(BasePPOActor):
         temperature = data.meta_info["temperature"]  # temperature must be in the data.meta_info to avoid silent error
         multi_turn = data.meta_info.get("multi_turn", False)
 
+        use_myverl_opd = self.config.get("use_myverl_opd_loss", False)
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "old_log_probs", "advantages"]
         if multi_turn or "loss_mask" in data.batch.keys():
             select_keys.append("loss_mask")
-        if self.config.use_kl_loss:
+        if self.config.use_kl_loss or use_myverl_opd:
             select_keys.append("ref_log_prob")
         batch = data.select(batch_keys=select_keys).batch
         has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch.keys()
@@ -417,6 +418,71 @@ class DataParallelPPOActor(BasePPOActor):
                         policy_loss = policy_loss + kl_loss * self.config.kl_loss_coef
                         metrics["actor/kl_loss"] = kl_loss.detach().item()
                         metrics["actor/kl_coef"] = self.config.kl_loss_coef
+
+                    if use_myverl_opd:
+                        teacher_log_prob = data["ref_log_prob"]
+                        loss_mode = self.config.get("myverl_opd_loss_mode", "k1")
+                        distillation_losses = kl_penalty(
+                            logprob=log_prob,
+                            ref_logprob=teacher_log_prob,
+                            kl_penalty=loss_mode,
+                        )
+                        valid_distill = distillation_losses[response_mask.bool()]
+                        if valid_distill.numel() > 0:
+                            metrics["distillation/abs_loss"] = valid_distill.abs().mean().detach().item()
+                            metrics["distillation/loss_min"] = valid_distill.min().detach().item()
+                            metrics["distillation/loss_max"] = valid_distill.max().detach().item()
+
+                        loss_max_clamp = self.config.get("myverl_opd_loss_max_clamp", None)
+                        if loss_max_clamp is not None:
+                            distillation_losses = distillation_losses.clamp(
+                                min=-loss_max_clamp,
+                                max=loss_max_clamp,
+                            )
+
+                        if self.config.get("myverl_opd_use_policy_gradient", True):
+                            distill_loss, distill_clipfrac, distill_kl, distill_clipfrac_lower = compute_policy_loss(
+                                old_log_prob=old_log_prob,
+                                log_prob=log_prob,
+                                advantages=-distillation_losses.detach(),
+                                response_mask=response_mask,
+                                cliprange=clip_ratio,
+                                cliprange_low=clip_ratio_low,
+                                cliprange_high=clip_ratio_high,
+                                clip_ratio_c=clip_ratio_c,
+                                loss_agg_mode=loss_agg_mode,
+                            )
+                            metrics["distillation/pg_clipfrac"] = distill_clipfrac.detach().item()
+                            metrics["distillation/ppo_kl"] = distill_kl.detach().item()
+                            metrics["distillation/pg_clipfrac_lower"] = distill_clipfrac_lower.detach().item()
+                        else:
+                            distill_loss = agg_loss(
+                                loss_mat=distillation_losses,
+                                loss_mask=response_mask,
+                                loss_agg_mode=loss_agg_mode,
+                            )
+
+                        if not self.config.get("myverl_opd_use_task_rewards", True):
+                            policy_loss = policy_loss.new_tensor(0.0)
+                            distill_coef = 1.0
+                        else:
+                            distill_coef = self.config.get("myverl_opd_loss_coef", 1.0)
+                        policy_loss = policy_loss + distill_loss * distill_coef
+                        metrics["distillation/loss"] = distill_loss.detach().item()
+                        metrics["distillation/loss_coef"] = distill_coef
+
+                    if self.config.get("use_opd_loss", False):
+                        opd_coef = self.config.get("opd_loss_coef", 0.0)
+                        opd_mask = response_mask
+                        if self.config.get("opd_positive_only", True):
+                            opd_mask = response_mask * (advantages > 0).to(response_mask.dtype)
+                        if opd_mask.sum() > 0:
+                            opd_loss = agg_loss(loss_mat=-log_prob, loss_mask=opd_mask, loss_agg_mode=loss_agg_mode)
+                        else:
+                            opd_loss = log_prob.new_tensor(0.0)
+                        policy_loss = policy_loss + opd_loss * opd_coef
+                        metrics["actor/opd_loss"] = opd_loss.detach().item()
+                        metrics["actor/opd_loss_coef"] = opd_coef
 
                     if self.config.use_dynamic_bsz:
                         # relative to the dynamic bsz

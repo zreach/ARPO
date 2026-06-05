@@ -10,7 +10,7 @@ import pandas as pd
 
 
 SEARCH_RE = re.compile(
-    r"(<search>|</search>|\bsearch\b|web\s*search|bing|google|wikipedia|browser|retrieval)",
+    r"(<search>|</search>|search|web\s*search|bing|google|wikipedia|browser|retrieval)",
     re.IGNORECASE,
 )
 
