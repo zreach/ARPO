@@ -4,7 +4,7 @@ set -xeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ACTOR_MODEL_PATH="${ACTOR_MODEL_PATH:-/workspace/hf/Qwen/Qwen2.5-3B-Instruct}"
-TEACHER_MODEL_PATH="${TEACHER_MODEL_PATH:-/workspace/ARPO/ARPO/checkpoints/baseline_7b_code_tool_grpo/global_step_78/hf"
+TEACHER_MODEL_PATH="${TEACHER_MODEL_PATH:-/workspace/ARPO/ARPO/checkpoints/baseline_7b_code_tool_grpo/global_step_78/hf}"
 
 export ACTOR_MODEL_PATH
 export EXPERIMENT_NAME="${EXPERIMENT_NAME:-opd_3b_code_tool_only}"
