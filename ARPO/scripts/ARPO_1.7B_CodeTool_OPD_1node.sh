@@ -3,7 +3,7 @@ set -xeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-ACTOR_MODEL_PATH="${ACTOR_MODEL_PATH:-/workspace/hf/Qwen/Qwen2.5-7B-Instruct}"
+ACTOR_MODEL_PATH="${ACTOR_MODEL_PATH:-/workspace/hf/Qwen/Qwen2.5-1.7B-Instruct}"
 TEACHER_MODEL_PATH="${TEACHER_MODEL_PATH:-${ACTOR_MODEL_PATH}}"
 
 export ACTOR_MODEL_PATH
