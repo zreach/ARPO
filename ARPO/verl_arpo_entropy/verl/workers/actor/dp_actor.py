@@ -323,11 +323,16 @@ class DataParallelPPOActor(BasePPOActor):
         multi_turn = data.meta_info.get("multi_turn", False)
 
         use_myverl_opd = self.config.get("use_myverl_opd_loss", False)
+        use_routed_opd = self.config.get("use_routed_opd_loss", False)
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "old_log_probs", "advantages"]
         if multi_turn or "loss_mask" in data.batch.keys():
             select_keys.append("loss_mask")
-        if self.config.use_kl_loss or use_myverl_opd:
+        if self.config.use_kl_loss or use_myverl_opd or use_routed_opd:
             select_keys.append("ref_log_prob")
+        if use_routed_opd:
+            for key in ["math_ref_log_prob", "code_ref_log_prob", "math_opd_mask", "code_opd_mask"]:
+                if key in data.batch.keys():
+                    select_keys.append(key)
         batch = data.select(batch_keys=select_keys).batch
         has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch.keys()
 
@@ -418,6 +423,77 @@ class DataParallelPPOActor(BasePPOActor):
                         policy_loss = policy_loss + kl_loss * self.config.kl_loss_coef
                         metrics["actor/kl_loss"] = kl_loss.detach().item()
                         metrics["actor/kl_coef"] = self.config.kl_loss_coef
+
+                    if use_routed_opd:
+                        loss_mode = self.config.get("routed_opd_loss_mode", "k1")
+                        math_teacher_log_prob = data.get("math_ref_log_prob", data["ref_log_prob"])
+                        code_teacher_log_prob = data.get("code_ref_log_prob", data["ref_log_prob"])
+                        math_mask = data.get("math_opd_mask", torch.zeros_like(response_mask)).to(response_mask.dtype)
+                        code_mask = data.get("code_opd_mask", torch.zeros_like(response_mask)).to(response_mask.dtype)
+                        math_mask = math_mask * response_mask
+                        code_mask = code_mask * response_mask * (1 - math_mask).clamp(min=0, max=1)
+                        routed_mask = ((math_mask + code_mask) > 0).to(response_mask.dtype)
+
+                        math_losses = kl_penalty(
+                            logprob=log_prob,
+                            ref_logprob=math_teacher_log_prob,
+                            kl_penalty=loss_mode,
+                        )
+                        code_losses = kl_penalty(
+                            logprob=log_prob,
+                            ref_logprob=code_teacher_log_prob,
+                            kl_penalty=loss_mode,
+                        )
+                        distillation_losses = math_losses * math_mask + code_losses * code_mask
+
+                        valid_distill = distillation_losses[routed_mask.bool()]
+                        metrics["distillation/routed_math_tokens"] = math_mask.sum().detach().item()
+                        metrics["distillation/routed_code_tokens"] = code_mask.sum().detach().item()
+                        if valid_distill.numel() > 0:
+                            metrics["distillation/routed_abs_loss"] = valid_distill.abs().mean().detach().item()
+                            metrics["distillation/routed_loss_min"] = valid_distill.min().detach().item()
+                            metrics["distillation/routed_loss_max"] = valid_distill.max().detach().item()
+
+                        loss_max_clamp = self.config.get("routed_opd_loss_max_clamp", None)
+                        if loss_max_clamp is not None:
+                            distillation_losses = distillation_losses.clamp(
+                                min=-loss_max_clamp,
+                                max=loss_max_clamp,
+                            )
+
+                        if routed_mask.sum() > 0:
+                            if self.config.get("routed_opd_use_policy_gradient", True):
+                                distill_loss, distill_clipfrac, distill_kl, distill_clipfrac_lower = compute_policy_loss(
+                                    old_log_prob=old_log_prob,
+                                    log_prob=log_prob,
+                                    advantages=-distillation_losses.detach(),
+                                    response_mask=routed_mask,
+                                    cliprange=clip_ratio,
+                                    cliprange_low=clip_ratio_low,
+                                    cliprange_high=clip_ratio_high,
+                                    clip_ratio_c=clip_ratio_c,
+                                    loss_agg_mode=loss_agg_mode,
+                                )
+                                metrics["distillation/routed_pg_clipfrac"] = distill_clipfrac.detach().item()
+                                metrics["distillation/routed_ppo_kl"] = distill_kl.detach().item()
+                                metrics["distillation/routed_pg_clipfrac_lower"] = distill_clipfrac_lower.detach().item()
+                            else:
+                                distill_loss = agg_loss(
+                                    loss_mat=distillation_losses,
+                                    loss_mask=routed_mask,
+                                    loss_agg_mode=loss_agg_mode,
+                                )
+                        else:
+                            distill_loss = log_prob.new_tensor(0.0)
+
+                        if not self.config.get("routed_opd_use_task_rewards", True):
+                            policy_loss = policy_loss.new_tensor(0.0)
+                            distill_coef = 1.0
+                        else:
+                            distill_coef = self.config.get("routed_opd_loss_coef", 1.0)
+                        policy_loss = policy_loss + distill_loss * distill_coef
+                        metrics["distillation/routed_loss"] = distill_loss.detach().item()
+                        metrics["distillation/routed_loss_coef"] = distill_coef
 
                     if use_myverl_opd:
                         teacher_log_prob = data["ref_log_prob"]

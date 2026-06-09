@@ -16,6 +16,7 @@ import concurrent.futures
 import importlib
 import logging
 import os
+import re
 import time
 import random
 from copy import deepcopy
@@ -35,6 +36,21 @@ from verl.workers.rollout.vllm_rollout.vllm_rollout_spmd import vLLMRollout, _pr
 import math
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
+
+
+def _find_inner_spans(text: str, start_pat: str, end_pat: str) -> List[tuple[int, int]]:
+    spans = []
+    for match in re.finditer(start_pat, text, flags=re.IGNORECASE | re.DOTALL):
+        start = match.end()
+        end_match = re.search(end_pat, text[start:], flags=re.IGNORECASE | re.DOTALL)
+        end = start + end_match.start() if end_match else len(text)
+        if end > start:
+            spans.append((start, end))
+    return spans
+
+
+def _overlaps(start: int, end: int, spans: List[tuple[int, int]]) -> bool:
+    return any(start < span_end and end > span_start for span_start, span_end in spans)
 
 
 def _load_tool_from_config(tool_config: DictConfig) -> BaseTool:
@@ -120,6 +136,29 @@ class vLLMRolloutWithTools(vLLMRollout):
                 "vLLMRolloutWithTools initialized, but no tools were configured.")
 
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_tool_workers)
+
+    def _build_routed_opd_masks(self, output_ids: List[int]) -> tuple[torch.Tensor, torch.Tensor]:
+        """Build token masks for math-reasoning and code OPD teachers."""
+        text = self.tokenizer.decode(output_ids, skip_special_tokens=False)
+        think_spans = _find_inner_spans(text, r"<think>", r"</think>")
+        code_spans = []
+        code_spans.extend(_find_inner_spans(text, r"<python>", r"</python>"))
+        code_spans.extend(_find_inner_spans(text, r"<parameter=code>", r"</parameter>"))
+        code_spans.extend(_find_inner_spans(text, r"```(?:python|py)?\s*\n", r"```"))
+
+        math_mask = []
+        code_mask = []
+        cursor = 0
+        for token_id in output_ids:
+            piece = self.tokenizer.decode([token_id], skip_special_tokens=False)
+            next_cursor = cursor + len(piece)
+            in_code = _overlaps(cursor, next_cursor, code_spans)
+            in_think = _overlaps(cursor, next_cursor, think_spans)
+            code_mask.append(1 if in_code else 0)
+            math_mask.append(1 if in_think and not in_code else 0)
+            cursor = next_cursor
+
+        return torch.tensor(math_mask, dtype=torch.long), torch.tensor(code_mask, dtype=torch.long)
 
     def __del__(self):
         executor = getattr(self, "executor", None)
@@ -560,6 +599,8 @@ class vLLMRolloutWithTools(vLLMRollout):
 
             padded_response_list = []
             padded_result_mask_list = []
+            padded_math_opd_mask_list = []
+            padded_code_opd_mask_list = []
             for output_ids, result_mask in zip(output_sequences, output_result_masks):
                 logger.debug(f"len(output_ids): {len(output_ids)}, len(result_mask): {len(result_mask)}, output_ids: {output_ids}, result_mask: {result_mask}")
                 
@@ -570,12 +611,20 @@ class vLLMRolloutWithTools(vLLMRollout):
                 
                 result_mask_tensor = torch.tensor(result_mask)
                 result_mask_tensor = pad_sequence_to_length(result_mask_tensor, self.config.response_length, 0)
+
+                math_opd_mask, code_opd_mask = self._build_routed_opd_masks(output_ids)
+                math_opd_mask = pad_sequence_to_length(math_opd_mask, self.config.response_length, 0)
+                code_opd_mask = pad_sequence_to_length(code_opd_mask, self.config.response_length, 0)
                 
                 padded_response_list.append(response)
                 padded_result_mask_list.append(result_mask_tensor)
+                padded_math_opd_mask_list.append(math_opd_mask)
+                padded_code_opd_mask_list.append(code_opd_mask)
             
             response = torch.stack(padded_response_list, dim=0).to(input_ids.device)
             loss_mask = torch.stack(padded_result_mask_list, dim=0).to(input_ids.device)
+            math_opd_mask = torch.stack(padded_math_opd_mask_list, dim=0).to(input_ids.device)
+            code_opd_mask = torch.stack(padded_code_opd_mask_list, dim=0).to(input_ids.device)
             
             non_tensor_batch = deepcopy(prompts.non_tensor_batch)
             if num_samples > 1 and do_sample:
@@ -607,6 +656,8 @@ class vLLMRolloutWithTools(vLLMRollout):
             final_attention_mask = torch.cat((attention_mask, response_attention_mask), dim=-1)
 
             loss_mask = loss_mask * response_attention_mask
+            math_opd_mask = math_opd_mask * loss_mask
+            code_opd_mask = code_opd_mask * loss_mask
 
             # 计算平均执行时间
             if tool_metrics["tools/total_calls"] > 0:
@@ -631,6 +682,8 @@ class vLLMRolloutWithTools(vLLMRollout):
                 "input_ids": seq,
                 "attention_mask": final_attention_mask,
                 "loss_mask": loss_mask,
+                "math_opd_mask": math_opd_mask,
+                "code_opd_mask": code_opd_mask,
                 "position_ids": final_position_ids,
             }, batch_size=final_batch_size)
 

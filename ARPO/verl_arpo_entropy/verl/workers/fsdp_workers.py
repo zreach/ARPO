@@ -577,24 +577,45 @@ class ActorRolloutRefWorker(Worker):
             self.rollout, self.rollout_sharding_manager = self._build_rollout(trust_remote_code=self.config.model.get("trust_remote_code", False))
 
         if self._is_ref:
-            ref_model_path = self.config.ref.get("model_path", self.config.model.path)
-            local_path = copy_to_local(ref_model_path, use_shm=use_shm)
-            self.ref_module_fsdp = self._build_model_optimizer(
-                model_path=local_path,
-                fsdp_config=self.config.ref.fsdp_config,
-                optim_config=None,
-                override_model_config=override_model_config,
-                use_remove_padding=use_remove_padding,
-                use_fused_kernels=use_fused_kernels,
-                trust_remote_code=self.config.model.get("trust_remote_code", False),
-                use_liger=self.config.model.get("use_liger", False),
-                role="ref",
-            )[0]
             OmegaConf.set_struct(self.config.ref, True)
             with open_dict(self.config.ref):
                 self.config.ref.use_remove_padding = use_remove_padding
                 self.config.ref.use_fused_kernels = use_fused_kernels
-            self.ref_policy = DataParallelPPOActor(config=self.config.ref, actor_module=self.ref_module_fsdp)
+
+            def build_ref_policy(model_path, role="ref"):
+                local_path = copy_to_local(model_path, use_shm=use_shm)
+                module_fsdp = self._build_model_optimizer(
+                    model_path=local_path,
+                    fsdp_config=self.config.ref.fsdp_config,
+                    optim_config=None,
+                    override_model_config=override_model_config,
+                    use_remove_padding=use_remove_padding,
+                    use_fused_kernels=use_fused_kernels,
+                    trust_remote_code=self.config.model.get("trust_remote_code", False),
+                    use_liger=self.config.model.get("use_liger", False),
+                    role=role,
+                )[0]
+                return module_fsdp, DataParallelPPOActor(config=self.config.ref, actor_module=module_fsdp)
+
+            ref_model_path = self.config.ref.get("model_path", self.config.model.path)
+            self.ref_module_fsdp, self.ref_policy = build_ref_policy(ref_model_path, role="ref")
+
+            math_model_path = self.config.ref.get("math_model_path", None)
+            code_model_path = self.config.ref.get("code_model_path", None)
+            self.math_ref_module_fsdp = None
+            self.math_ref_policy = None
+            self.code_ref_module_fsdp = None
+            self.code_ref_policy = None
+            if math_model_path is not None:
+                if math_model_path == ref_model_path:
+                    self.math_ref_module_fsdp, self.math_ref_policy = self.ref_module_fsdp, self.ref_policy
+                else:
+                    self.math_ref_module_fsdp, self.math_ref_policy = build_ref_policy(math_model_path, role="ref")
+            if code_model_path is not None:
+                if code_model_path == ref_model_path:
+                    self.code_ref_module_fsdp, self.code_ref_policy = self.ref_module_fsdp, self.ref_policy
+                else:
+                    self.code_ref_module_fsdp, self.code_ref_policy = build_ref_policy(code_model_path, role="ref")
 
         if self._is_actor:
             self.flops_counter = FlopsCounter(self.actor_model_config)
@@ -742,16 +763,30 @@ class ActorRolloutRefWorker(Worker):
         data.meta_info["use_dynamic_bsz"] = self.config.ref.log_prob_use_dynamic_bsz
         with self.ulysses_sharding_manager:
             data = self.ulysses_sharding_manager.preprocess_data(data)
+            output_tensors = {}
             output, _ = self.ref_policy.compute_log_prob(data=data, calculate_entropy=False)
-            output = DataProto.from_dict(tensors={"ref_log_prob": output})
+            output_tensors["ref_log_prob"] = output
+            if self.math_ref_policy is not None:
+                math_output, _ = self.math_ref_policy.compute_log_prob(data=data, calculate_entropy=False)
+                output_tensors["math_ref_log_prob"] = math_output
+            if self.code_ref_policy is not None:
+                code_output, _ = self.code_ref_policy.compute_log_prob(data=data, calculate_entropy=False)
+                output_tensors["code_ref_log_prob"] = code_output
+            output = DataProto.from_dict(tensors=output_tensors)
             output = self.ulysses_sharding_manager.postprocess_data(output)
 
         output = output.to("cpu")
 
         # https://pytorch.org/docs/stable/notes/fsdp.html#fsdp-notes
         # unshard the root FSDP module
-        if self.world_size > 1 and fsdp_version(self.ref_policy.actor_module) == 1:
-            self.ref_policy.actor_module._handle.reshard(True)
+        seen_ref_policies = set()
+        for ref_policy in [self.ref_policy, self.math_ref_policy, self.code_ref_policy]:
+            if ref_policy is not None and id(ref_policy) in seen_ref_policies:
+                continue
+            if ref_policy is not None:
+                seen_ref_policies.add(id(ref_policy))
+            if ref_policy is not None and self.world_size > 1 and fsdp_version(ref_policy.actor_module) == 1:
+                ref_policy.actor_module._handle.reshard(True)
 
         return output
 
