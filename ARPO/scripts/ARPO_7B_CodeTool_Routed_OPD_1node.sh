@@ -3,12 +3,12 @@ set -xeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-ACTOR_MODEL_PATH="${ACTOR_MODEL_PATH:-/workspace/hf/Qwen/Qwen2.5-1.5B-Instruct}"
+ACTOR_MODEL_PATH="${ACTOR_MODEL_PATH:-/workspace/hf/Qwen/Qwen2.5-7B-Instruct}"
 MATH_TEACHER_MODEL_PATH="${MATH_TEACHER_MODEL_PATH:-/workspace/hf/Qwen/Qwen2.5-Math-7B-Instruct}"
 CODE_TEACHER_MODEL_PATH="${CODE_TEACHER_MODEL_PATH:-/workspace/hf/Qwen/Qwen2.5-Coder-7B-Instruct}"
 
 export ACTOR_MODEL_PATH
-export EXPERIMENT_NAME="${EXPERIMENT_NAME:-routed_opd_1.5b_code_tool_only}"
+export EXPERIMENT_NAME="${EXPERIMENT_NAME:-routed_opd_7b_code_tool_only}"
 
 # Keep the earlier lightweight OPD branch disabled; this script uses routed OPD.
 export USE_OPD_LOSS="${USE_OPD_LOSS:-False}"
@@ -20,7 +20,7 @@ ROUTED_OPD_USE_TASK_REWARDS="${ROUTED_OPD_USE_TASK_REWARDS:-True}"
 ROUTED_OPD_USE_POLICY_GRADIENT="${ROUTED_OPD_USE_POLICY_GRADIENT:-True}"
 ROUTED_OPD_LOSS_MAX_CLAMP="${ROUTED_OPD_LOSS_MAX_CLAMP:-10.0}"
 
-exec "${SCRIPT_DIR}/ARPO_1.5B_CodeTool_1node.sh" \
+exec "${SCRIPT_DIR}/ARPO_7B_CodeTool_1node.sh" \
     ++actor_rollout_ref.ref.model_path="${MATH_TEACHER_MODEL_PATH}" \
     ++actor_rollout_ref.ref.math_model_path="${MATH_TEACHER_MODEL_PATH}" \
     ++actor_rollout_ref.ref.code_model_path="${CODE_TEACHER_MODEL_PATH}" \
