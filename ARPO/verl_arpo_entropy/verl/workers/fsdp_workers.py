@@ -36,7 +36,7 @@ from verl.single_controller.base.decorator import Dispatch, register
 from verl.utils import hf_processor, hf_tokenizer
 from verl.utils.activation_offload import enable_activation_offloading
 from verl.utils.checkpoint.fsdp_checkpoint_manager import FSDPCheckpointManager
-from verl.utils.debug import log_gpu_memory_usage
+from verl.utils.debug import assert_cpu_memory_safe, assert_gpu_memory_safe, log_gpu_memory_usage
 from verl.utils.flops_counter import FlopsCounter
 from verl.utils.fs import copy_to_local
 from verl.utils.fsdp_utils import (
@@ -75,6 +75,11 @@ logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 device_name = get_device_name()
+
+
+def assert_memory_safe(head: str):
+    assert_cpu_memory_safe(head, logger=logger)
+    assert_gpu_memory_safe(head, logger=logger)
 
 
 def create_device_mesh(world_size, fsdp_size):
@@ -574,7 +579,9 @@ class ActorRolloutRefWorker(Worker):
             self.actor = DataParallelPPOActor(config=self.config.actor, actor_module=self.actor_module_fsdp, actor_optimizer=self.actor_optimizer)
 
         if self._is_rollout:
+            assert_memory_safe("before build rollout")
             self.rollout, self.rollout_sharding_manager = self._build_rollout(trust_remote_code=self.config.model.get("trust_remote_code", False))
+            assert_memory_safe("after build rollout")
 
         if self._is_ref:
             OmegaConf.set_struct(self.config.ref, True)
@@ -583,6 +590,7 @@ class ActorRolloutRefWorker(Worker):
                 self.config.ref.use_fused_kernels = use_fused_kernels
 
             def build_ref_policy(model_path, role="ref"):
+                assert_memory_safe(f"before build ref policy from {model_path}")
                 local_path = copy_to_local(model_path, use_shm=use_shm)
                 module_fsdp = self._build_model_optimizer(
                     model_path=local_path,
@@ -595,7 +603,9 @@ class ActorRolloutRefWorker(Worker):
                     use_liger=self.config.model.get("use_liger", False),
                     role=role,
                 )[0]
-                return module_fsdp, DataParallelPPOActor(config=self.config.ref, actor_module=module_fsdp)
+                policy = DataParallelPPOActor(config=self.config.ref, actor_module=module_fsdp)
+                assert_memory_safe(f"after build ref policy from {model_path}")
+                return module_fsdp, policy
 
             ref_model_path = self.config.ref.get("model_path", self.config.model.path)
             self.ref_module_fsdp, self.ref_policy = build_ref_policy(ref_model_path, role="ref")
@@ -627,8 +637,11 @@ class ActorRolloutRefWorker(Worker):
                 checkpoint_contents=self.config.actor.checkpoint.contents,
             )
 
+        assert_memory_safe("after init_model")
+
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def update_actor(self, data: DataProto):
+        assert_memory_safe("before update_actor")
         # Support all hardwares
         data = data.to(get_torch_device().current_device())
 
@@ -668,10 +681,12 @@ class ActorRolloutRefWorker(Worker):
             offload_fsdp_optimizer(optimizer=self.actor_optimizer)
             log_gpu_memory_usage("After offload actor optimizer during update_actor", logger=logger)
 
+        assert_memory_safe("after update_actor")
         return output
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def generate_sequences(self, prompts: DataProto):
+        assert_memory_safe("before generate_sequences")
         # Support all hardwares
         prompts = prompts.to(get_torch_device().current_device())
 
@@ -696,11 +711,13 @@ class ActorRolloutRefWorker(Worker):
 
         # clear kv cache
         get_torch_device().empty_cache()
+        assert_memory_safe("after generate_sequences")
         return output
 
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def compute_log_prob(self, data: DataProto):
+        assert_memory_safe("before compute_log_prob")
         # when is_lora is True, we use the actor without lora applied to calculate the log_prob
         # which is mostly used for ref log_prob calculation
         assert self._is_actor
@@ -739,10 +756,12 @@ class ActorRolloutRefWorker(Worker):
             offload_fsdp_model_to_cpu(self.actor_module_fsdp)
             log_gpu_memory_usage("After offload actor model during compute_log_prob", logger=logger)
 
+        assert_memory_safe("after compute_log_prob")
         return output
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def compute_ref_log_prob(self, data: DataProto):
+        assert_memory_safe("before compute_ref_log_prob")
         if self._is_lora:
             # if _is_lora, actor without lora applied is the ref
             data.meta_info['is_lora'] = True
@@ -763,15 +782,24 @@ class ActorRolloutRefWorker(Worker):
         data.meta_info["use_dynamic_bsz"] = self.config.ref.log_prob_use_dynamic_bsz
         with self.ulysses_sharding_manager:
             data = self.ulysses_sharding_manager.preprocess_data(data)
+            cached_outputs = {}
+
+            def compute_policy_log_prob(policy):
+                policy_id = id(policy)
+                if policy_id not in cached_outputs:
+                    cached_outputs[policy_id] = policy.compute_log_prob(data=data, calculate_entropy=False)[0]
+                return cached_outputs[policy_id]
+
             output_tensors = {}
-            output, _ = self.ref_policy.compute_log_prob(data=data, calculate_entropy=False)
-            output_tensors["ref_log_prob"] = output
+            skip_default_ref = self.config.ref.get("skip_default_ref_log_prob", False)
+            if not skip_default_ref:
+                output_tensors["ref_log_prob"] = compute_policy_log_prob(self.ref_policy)
             if self.math_ref_policy is not None:
-                math_output, _ = self.math_ref_policy.compute_log_prob(data=data, calculate_entropy=False)
-                output_tensors["math_ref_log_prob"] = math_output
+                output_tensors["math_ref_log_prob"] = compute_policy_log_prob(self.math_ref_policy)
             if self.code_ref_policy is not None:
-                code_output, _ = self.code_ref_policy.compute_log_prob(data=data, calculate_entropy=False)
-                output_tensors["code_ref_log_prob"] = code_output
+                output_tensors["code_ref_log_prob"] = compute_policy_log_prob(self.code_ref_policy)
+            if not output_tensors:
+                output_tensors["ref_log_prob"] = compute_policy_log_prob(self.ref_policy)
             output = DataProto.from_dict(tensors=output_tensors)
             output = self.ulysses_sharding_manager.postprocess_data(output)
 
@@ -788,6 +816,7 @@ class ActorRolloutRefWorker(Worker):
             if ref_policy is not None and self.world_size > 1 and fsdp_version(ref_policy.actor_module) == 1:
                 ref_policy.actor_module._handle.reshard(True)
 
+        assert_memory_safe("after compute_ref_log_prob")
         return output
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)

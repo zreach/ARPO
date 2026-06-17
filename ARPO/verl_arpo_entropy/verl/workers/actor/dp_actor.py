@@ -327,10 +327,10 @@ class DataParallelPPOActor(BasePPOActor):
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "old_log_probs", "advantages"]
         if multi_turn or "loss_mask" in data.batch.keys():
             select_keys.append("loss_mask")
-        if self.config.use_kl_loss or use_myverl_opd or use_routed_opd:
+        if self.config.use_kl_loss or use_myverl_opd:
             select_keys.append("ref_log_prob")
         if use_routed_opd:
-            for key in ["math_ref_log_prob", "code_ref_log_prob", "math_opd_mask", "code_opd_mask"]:
+            for key in ["ref_log_prob", "math_ref_log_prob", "code_ref_log_prob", "math_opd_mask", "code_opd_mask"]:
                 if key in data.batch.keys():
                     select_keys.append(key)
         batch = data.select(batch_keys=select_keys).batch
@@ -426,8 +426,15 @@ class DataParallelPPOActor(BasePPOActor):
 
                     if use_routed_opd:
                         loss_mode = self.config.get("routed_opd_loss_mode", "k1")
-                        math_teacher_log_prob = data.get("math_ref_log_prob", data["ref_log_prob"])
-                        code_teacher_log_prob = data.get("code_ref_log_prob", data["ref_log_prob"])
+                        if "math_ref_log_prob" not in data and "code_ref_log_prob" not in data and "ref_log_prob" not in data:
+                            raise KeyError("Routed OPD requires math_ref_log_prob/code_ref_log_prob or ref_log_prob.")
+                        fallback_teacher_log_prob = data.get("ref_log_prob", None)
+                        math_teacher_log_prob = data.get("math_ref_log_prob", fallback_teacher_log_prob)
+                        code_teacher_log_prob = data.get("code_ref_log_prob", fallback_teacher_log_prob)
+                        if math_teacher_log_prob is None:
+                            math_teacher_log_prob = code_teacher_log_prob
+                        if code_teacher_log_prob is None:
+                            code_teacher_log_prob = math_teacher_log_prob
                         math_mask = data.get("math_opd_mask", torch.zeros_like(response_mask)).to(response_mask.dtype)
                         code_mask = data.get("code_opd_mask", torch.zeros_like(response_mask)).to(response_mask.dtype)
                         math_mask = math_mask * response_mask

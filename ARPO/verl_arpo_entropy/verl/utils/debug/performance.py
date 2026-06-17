@@ -15,8 +15,10 @@
 import datetime
 import inspect
 import logging
+import os
 from typing import Any, Tuple
 
+import psutil
 import torch.distributed as dist
 
 from verl.utils.device import get_torch_device
@@ -50,6 +52,94 @@ def log_gpu_memory_usage(head: str, logger: logging.Logger = None, level=logging
             print(message)
         else:
             logger.log(msg=message, level=level)
+
+
+def assert_gpu_memory_safe(
+    head: str,
+    max_used_ratio: float | None = None,
+    min_free_gb: float | None = None,
+    logger: logging.Logger = None,
+):
+    """Fail fast when device memory is too close to OOM.
+
+    Set either threshold through arguments or env vars:
+    - VERL_GPU_MEMORY_GUARD_MAX_USED_RATIO, e.g. 0.94
+    - VERL_GPU_MEMORY_GUARD_MIN_FREE_GB, e.g. 4
+    """
+    env_ratio = os.getenv("VERL_GPU_MEMORY_GUARD_MAX_USED_RATIO")
+    env_free = os.getenv("VERL_GPU_MEMORY_GUARD_MIN_FREE_GB")
+    if max_used_ratio is None and env_ratio:
+        max_used_ratio = float(env_ratio)
+    if min_free_gb is None and env_free:
+        min_free_gb = float(env_free)
+    if max_used_ratio is None and min_free_gb is None:
+        return
+
+    mem_free, mem_total = get_torch_device().mem_get_info()
+    used_ratio = 1.0 - (mem_free / mem_total)
+    free_gb = mem_free / (1024**3)
+    total_gb = mem_total / (1024**3)
+
+    too_full = max_used_ratio is not None and used_ratio >= max_used_ratio
+    too_little_free = min_free_gb is not None and free_gb <= min_free_gb
+    if not (too_full or too_little_free):
+        return
+
+    message = (
+        f"GPU memory guard triggered at {head}: "
+        f"used_ratio={used_ratio:.4f}, free_gb={free_gb:.2f}, total_gb={total_gb:.2f}, "
+        f"max_used_ratio={max_used_ratio}, min_free_gb={min_free_gb}. "
+        "Exiting before CUDA OOM."
+    )
+    if logger is None:
+        print(message)
+    else:
+        logger.error(message)
+    raise RuntimeError(message)
+
+
+def assert_cpu_memory_safe(
+    head: str,
+    max_used_ratio: float | None = None,
+    min_available_gb: float | None = None,
+    logger: logging.Logger = None,
+):
+    """Fail fast when host RAM is too close to OOM.
+
+    Set either threshold through arguments or env vars:
+    - VERL_CPU_MEMORY_GUARD_MAX_USED_RATIO, e.g. 0.92
+    - VERL_CPU_MEMORY_GUARD_MIN_AVAILABLE_GB, e.g. 32
+    """
+    env_ratio = os.getenv("VERL_CPU_MEMORY_GUARD_MAX_USED_RATIO")
+    env_available = os.getenv("VERL_CPU_MEMORY_GUARD_MIN_AVAILABLE_GB")
+    if max_used_ratio is None and env_ratio:
+        max_used_ratio = float(env_ratio)
+    if min_available_gb is None and env_available:
+        min_available_gb = float(env_available)
+    if max_used_ratio is None and min_available_gb is None:
+        return
+
+    mem = psutil.virtual_memory()
+    used_ratio = mem.percent / 100.0
+    available_gb = mem.available / (1024**3)
+    total_gb = mem.total / (1024**3)
+
+    too_full = max_used_ratio is not None and used_ratio >= max_used_ratio
+    too_little_available = min_available_gb is not None and available_gb <= min_available_gb
+    if not (too_full or too_little_available):
+        return
+
+    message = (
+        f"CPU memory guard triggered at {head}: "
+        f"used_ratio={used_ratio:.4f}, available_gb={available_gb:.2f}, total_gb={total_gb:.2f}, "
+        f"max_used_ratio={max_used_ratio}, min_available_gb={min_available_gb}. "
+        "Exiting before host OOM."
+    )
+    if logger is None:
+        print(message)
+    else:
+        logger.error(message)
+    raise RuntimeError(message)
 
 
 class GPUMemoryLogger(DecoratorLoggerBase):
