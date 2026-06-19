@@ -20,6 +20,18 @@ export PYTHONPATH="${ARPO_DIR}/verl_arpo_entropy:${PYTHONPATH:-}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 CODE_TOOL_PYTHON_BIN="${CODE_TOOL_PYTHON_BIN:-${PYTHON_BIN}}"
 
+"${PYTHON_BIN}" -c '
+import sys
+if sys.version_info < (3, 10):
+    raise SystemExit(
+        "ARPO requires Python >= 3.10, but PYTHON_BIN resolved to "
+        + sys.executable
+        + " (Python "
+        + sys.version.split()[0]
+        + "). Set PYTHON_BIN to a Python 3.10+ executable."
+    )
+'
+
 # ============================ Basic Configuration ============================
 PROJECT_NAME="${PROJECT_NAME:-reasoning_code_tool}"
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-arpo_7b_code_tool_only}"
