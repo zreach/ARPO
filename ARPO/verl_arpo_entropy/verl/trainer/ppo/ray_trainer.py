@@ -18,6 +18,7 @@ FSDP PPO Trainer with Ray-based single controller.
 This trainer supports model-agonistic model initialization with huggingface
 """
 
+import gc
 import json
 import os
 import uuid
@@ -30,6 +31,7 @@ from pprint import pprint
 from typing import Dict, Optional, Type
 
 import numpy as np
+import psutil
 import ray
 import torch
 from codetiming import Timer
@@ -976,6 +978,18 @@ class RayPPOTrainer:
 
         for epoch in range(self.config.trainer.total_epochs):
             for batch_dict in self.train_dataloader:
+                gen_batch_output = None
+                gen_baseline_batch = None
+                gen_baseline_output = None
+                old_log_prob = None
+                ref_log_prob = None
+                reward_tensor = None
+                future_reward = None
+                critic_output = None
+                actor_output = None
+                inputs = None
+                outputs = None
+                scores = None
                 metrics = {}
                 timing_raw = {}
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
@@ -1202,6 +1216,8 @@ class RayPPOTrainer:
                                 reward_extra_infos_dict=reward_extra_infos_dict,
                                 dump_path=rollout_data_dir,
                             )
+                            del inputs, outputs, scores
+                            inputs = outputs = scores = None
 
                     # validate
                     if self.val_reward_fn is not None and self.config.trainer.test_freq > 0 and (is_last_step or self.global_steps % self.config.trainer.test_freq == 0):
@@ -1233,6 +1249,28 @@ class RayPPOTrainer:
                 logger.log(data=metrics, step=self.global_steps)
 
                 progress_bar.update(1)
+                del batch
+                del gen_batch
+                del gen_batch_output
+                del gen_baseline_batch
+                del gen_baseline_output
+                del old_log_prob
+                del ref_log_prob
+                del reward_tensor
+                del future_reward
+                del critic_output
+                del actor_output
+                del inputs
+                del outputs
+                del scores
+                del batch_dict
+
+                gc_interval = int(os.getenv("VERL_CPU_GC_INTERVAL_STEPS", "10"))
+                if gc_interval > 0 and self.global_steps % gc_interval == 0:
+                    gc_trigger_ratio = float(os.getenv("VERL_CPU_GC_TRIGGER_USED_RATIO", "0.85"))
+                    if psutil.virtual_memory().percent / 100.0 >= gc_trigger_ratio:
+                        gc.collect()
+
                 self.global_steps += 1
                 if is_last_step:
                     pprint(f"Final validation metrics: {last_val_metrics}")

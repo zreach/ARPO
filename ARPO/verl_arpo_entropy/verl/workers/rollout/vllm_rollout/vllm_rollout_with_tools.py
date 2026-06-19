@@ -221,6 +221,10 @@ class vLLMRolloutWithTools(vLLMRollout):
     @GPUMemoryLogger(role="vllm rollout spmd with tools", logger=logger)
     @torch.no_grad()
     def generate_sequences(self, prompts: DataProto, **kwargs) -> DataProto:
+        # Entropy state is scoped to one rollout batch. Keeping it across
+        # batches retains stale branch indices and can grow with varying sizes.
+        self.initial_entropy_dict.clear()
+
         if vllm_version in ('0.5.4', '0.6.3') and self.config.free_cache_engine:
             self.inference_engine.init_cache_engine()
 
