@@ -1265,7 +1265,7 @@ class RayPPOTrainer:
                 del scores
                 del batch_dict
 
-                gc_interval = int(os.getenv("VERL_CPU_GC_INTERVAL_STEPS", "10"))
+                gc_interval = int(os.getenv("VERL_CPU_GC_INTERVAL_STEPS", "1"))
                 if gc_interval > 0 and self.global_steps % gc_interval == 0:
                     gc_trigger_ratio = float(os.getenv("VERL_CPU_GC_TRIGGER_USED_RATIO", "0.85"))
                     if psutil.virtual_memory().percent / 100.0 >= gc_trigger_ratio:
