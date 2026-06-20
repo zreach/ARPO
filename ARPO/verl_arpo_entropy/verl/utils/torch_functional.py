@@ -17,6 +17,7 @@ Contain small torch utilities
 
 import math
 from contextlib import contextmanager
+import os
 from typing import Dict, List, Optional, Union
 
 import torch
@@ -34,6 +35,12 @@ try:
     FLAH_ATTN_CROSS_ENTROPY_LOSS_AVAILABLE = True
 except ImportError:
     FLAH_ATTN_CROSS_ENTROPY_LOSS_AVAILABLE = False
+
+USE_FLASH_ATTN_CROSS_ENTROPY = os.getenv("VERL_USE_FLASH_ATTN_CROSS_ENTROPY", "TRUE").upper() in {
+    "TRUE",
+    "1",
+    "YES",
+}
 
 
 def gather_from_labels(data, label):
@@ -68,7 +75,7 @@ def logprobs_from_logits(logits, labels, inplace_backward=True):
     Returns:
         Tensor: Log-probabilities of the target labels, shape logits.shape[:-1].
     """
-    if FLAH_ATTN_CROSS_ENTROPY_LOSS_AVAILABLE:
+    if FLAH_ATTN_CROSS_ENTROPY_LOSS_AVAILABLE and USE_FLASH_ATTN_CROSS_ENTROPY:
         batch_dim = logits.shape[:-1]
         last_dim = logits.shape[-1]
         logits = logits.reshape(-1, last_dim)
