@@ -738,11 +738,24 @@ class ActorRolloutRefWorker(Worker):
         with self.ulysses_sharding_manager:
             data = self.ulysses_sharding_manager.preprocess_data(data)
             with adapter_ctx:
-                output, entropys = self.actor.compute_log_prob(data=data, calculate_entropy=True)
-            output = DataProto.from_dict(
-                tensors={"old_log_probs": output, "entropys": entropys},
-                meta_info={"temperature": self.config.rollout.temperature},
-            )
+                actor_output = self.actor.compute_log_prob(data=data, calculate_entropy=True)
+            if self.config.actor.get("export_vopd_topk", False):
+                output, entropys, vopd_token_ids, vopd_student_log_probs = actor_output
+                output = DataProto.from_dict(
+                    tensors={
+                        "old_log_probs": output,
+                        "entropys": entropys,
+                        "vopd_token_ids": vopd_token_ids,
+                        "vopd_student_log_probs": vopd_student_log_probs,
+                    },
+                    meta_info={"temperature": self.config.rollout.temperature},
+                )
+            else:
+                output, entropys = actor_output
+                output = DataProto.from_dict(
+                    tensors={"old_log_probs": output, "entropys": entropys},
+                    meta_info={"temperature": self.config.rollout.temperature},
+                )
             output = self.ulysses_sharding_manager.postprocess_data(output)
 
         output = output.to("cpu")
@@ -800,6 +813,23 @@ class ActorRolloutRefWorker(Worker):
                 output_tensors["code_ref_log_prob"] = compute_policy_log_prob(self.code_ref_policy)
             if not output_tensors:
                 output_tensors["ref_log_prob"] = compute_policy_log_prob(self.ref_policy)
+
+            if "vopd_token_ids" in data.batch.keys() and "vopd_student_log_probs" in data.batch.keys():
+                teacher_selected_log_probs = self.ref_policy.compute_selected_token_log_probs(data=data)
+                student_selected_log_probs = data.batch["vopd_student_log_probs"]
+                student_selected_log_probs = student_selected_log_probs - torch.logsumexp(
+                    student_selected_log_probs,
+                    dim=-1,
+                    keepdim=True,
+                )
+                teacher_selected_log_probs = teacher_selected_log_probs - torch.logsumexp(
+                    teacher_selected_log_probs,
+                    dim=-1,
+                    keepdim=True,
+                )
+                student_probs = student_selected_log_probs.exp()
+                vopd_kl_terms = student_probs * (student_selected_log_probs - teacher_selected_log_probs)
+                output_tensors["vopd_kl_baseline"] = vopd_kl_terms.sum(dim=-1).clamp(min=0.0)
             output = DataProto.from_dict(tensors=output_tensors)
             output = self.ulysses_sharding_manager.postprocess_data(output)
 

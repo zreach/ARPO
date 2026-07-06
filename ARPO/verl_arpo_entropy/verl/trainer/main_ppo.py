@@ -127,6 +127,8 @@ class TaskRunner:
         if (
             config.algorithm.use_kl_in_reward
             or config.actor_rollout_ref.actor.use_kl_loss
+            or config.actor_rollout_ref.actor.get("use_base_opd_loss", False)
+            or config.actor_rollout_ref.actor.get("use_vopd_loss", False)
             or config.actor_rollout_ref.actor.get("use_myverl_opd_loss", False)
             or config.actor_rollout_ref.actor.get("use_routed_opd_loss", False)
         ):

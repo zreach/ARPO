@@ -74,13 +74,15 @@ class DataParallelPPOActor(BasePPOActor):
         )
         self.device_name = get_device_name()
 
-    def _forward_micro_batch(self, micro_batch, temperature, calculate_entropy=False) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _forward_micro_batch(self, micro_batch, temperature, calculate_entropy=False, vopd_topk=None):
         """
         Returns:
             entropy: # (bs, response_len)
             log_probs: # (bs, response_len)
         """
         response_length = micro_batch["responses"].size(-1)
+        if vopd_topk is not None and self.use_fused_kernels:
+            raise RuntimeError("vOPD requires response logits, but actor.use_fused_kernels=True only returns sampled log-probs.")
         multi_modal_inputs = {}
         if "multi_modal_inputs" in micro_batch:
             for key in micro_batch["multi_modal_inputs"][0].keys():
@@ -92,6 +94,8 @@ class DataParallelPPOActor(BasePPOActor):
             attention_mask = micro_batch["attention_mask"]
             position_ids = micro_batch["position_ids"]
             entropy = None
+            vopd_token_ids = None
+            vopd_student_log_probs = None
             if position_ids.dim() == 3:  # qwen2vl mrope
                 position_ids = position_ids.transpose(0, 1)  # (bsz, 3, seqlen) -> (3, bsz, seqlen)
 
@@ -167,6 +171,18 @@ class DataParallelPPOActor(BasePPOActor):
                     # compute entropy
                     if calculate_entropy:
                         entropy_rmpad = self.compute_entropy_from_logits(logits_rmpad)  # ((total_nnz / sp) + pad)
+                    if vopd_topk is not None:
+                        log_probs_vocab_rmpad = torch.nn.functional.log_softmax(logits_rmpad, dim=-1)
+                        if vopd_topk <= 0:
+                            vopd_student_log_probs_rmpad = log_probs_vocab_rmpad
+                            vopd_token_ids_rmpad = torch.arange(
+                                log_probs_vocab_rmpad.size(-1),
+                                device=log_probs_vocab_rmpad.device,
+                                dtype=torch.long,
+                            ).expand(log_probs_vocab_rmpad.size(0), -1)
+                        else:
+                            topk = min(vopd_topk, log_probs_vocab_rmpad.size(-1))
+                            vopd_student_log_probs_rmpad, vopd_token_ids_rmpad = torch.topk(log_probs_vocab_rmpad, k=topk, dim=-1)
 
                 # gather log_prob if sp > 1
                 if self.use_ulysses_sp:
@@ -180,6 +196,19 @@ class DataParallelPPOActor(BasePPOActor):
                     if calculate_entropy:
                         entropy_rmpad = gather_outpus_and_unpad(
                             entropy_rmpad,
+                            gather_dim=0,
+                            unpad_dim=0,
+                            padding_size=pad_size,
+                        )
+                    if vopd_topk is not None:
+                        vopd_student_log_probs_rmpad = gather_outpus_and_unpad(
+                            vopd_student_log_probs_rmpad,
+                            gather_dim=0,
+                            unpad_dim=0,
+                            padding_size=pad_size,
+                        )
+                        vopd_token_ids_rmpad = gather_outpus_and_unpad(
+                            vopd_token_ids_rmpad,
                             gather_dim=0,
                             unpad_dim=0,
                             padding_size=pad_size,
@@ -198,11 +227,27 @@ class DataParallelPPOActor(BasePPOActor):
                     batch=batch_size,
                     seqlen=seqlen,
                 )
+                if vopd_topk is not None:
+                    full_vopd_student_log_probs = pad_input(
+                        hidden_states=vopd_student_log_probs_rmpad,
+                        indices=indices,
+                        batch=batch_size,
+                        seqlen=seqlen,
+                    )
+                    full_vopd_token_ids = pad_input(
+                        hidden_states=vopd_token_ids_rmpad,
+                        indices=indices,
+                        batch=batch_size,
+                        seqlen=seqlen,
+                    )
 
                 # only return response part:
                 if calculate_entropy:
                     entropy = full_entropy.squeeze(-1)[:, -response_length - 1 : -1]  # (bsz, response_length)
                 log_probs = full_log_probs.squeeze(-1)[:, -response_length - 1 : -1]  # (bsz, response_length)
+                if vopd_topk is not None:
+                    vopd_student_log_probs = full_vopd_student_log_probs[:, -response_length - 1 : -1, :]
+                    vopd_token_ids = full_vopd_token_ids[:, -response_length - 1 : -1, :].long()
 
             else:  # not using rmpad and no ulysses sp
                 extra_args = {}
@@ -229,8 +274,112 @@ class DataParallelPPOActor(BasePPOActor):
                     log_probs = logprobs_from_logits(logits, micro_batch["responses"])
                     if calculate_entropy:
                         entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
+                    if vopd_topk is not None:
+                        log_probs_vocab = torch.nn.functional.log_softmax(logits, dim=-1)
+                        if vopd_topk <= 0:
+                            vopd_student_log_probs = log_probs_vocab
+                            vopd_token_ids = torch.arange(
+                                log_probs_vocab.size(-1),
+                                device=log_probs_vocab.device,
+                                dtype=torch.long,
+                            ).view(1, 1, -1).expand(log_probs_vocab.size(0), log_probs_vocab.size(1), -1)
+                        else:
+                            topk = min(vopd_topk, log_probs_vocab.size(-1))
+                            vopd_student_log_probs, vopd_token_ids = torch.topk(log_probs_vocab, k=topk, dim=-1)
 
+            if vopd_topk is not None:
+                return entropy, log_probs, vopd_token_ids, vopd_student_log_probs
             return entropy, log_probs
+
+    def _forward_selected_token_log_probs(self, micro_batch, temperature):
+        if self.use_fused_kernels:
+            raise RuntimeError("vOPD requires teacher logits, but ref.use_fused_kernels=True only returns sampled log-probs.")
+        response_token_ids = micro_batch["vopd_token_ids"]
+        response_length = response_token_ids.size(1)
+        topk = response_token_ids.size(2)
+        multi_modal_inputs = {}
+        if "multi_modal_inputs" in micro_batch:
+            for key in micro_batch["multi_modal_inputs"][0].keys():
+                multi_modal_inputs[key] = torch.cat([inputs[key] for inputs in micro_batch["multi_modal_inputs"]], dim=0)
+
+        with torch.no_grad(), torch.autocast(device_type=self.device_name, dtype=torch.bfloat16):
+            input_ids = micro_batch["input_ids"]
+            batch_size, seqlen = input_ids.shape
+            attention_mask = micro_batch["attention_mask"]
+            position_ids = micro_batch["position_ids"]
+            if position_ids.dim() == 3:
+                position_ids = position_ids.transpose(0, 1)
+
+            if self.use_remove_padding:
+                input_ids_rmpad, indices, *_ = unpad_input(input_ids.unsqueeze(-1), attention_mask)
+                input_ids_rmpad = input_ids_rmpad.transpose(0, 1)
+                if position_ids.dim() == 3:
+                    position_ids_rmpad = index_first_axis(rearrange(position_ids, "c b s ... -> (b s) c ..."), indices).transpose(0, 1).unsqueeze(1)
+                else:
+                    position_ids_rmpad = index_first_axis(rearrange(position_ids.unsqueeze(-1), "b s ... -> (b s) ..."), indices).transpose(0, 1)
+
+                selected_ids = torch.zeros(
+                    batch_size,
+                    seqlen,
+                    topk,
+                    dtype=response_token_ids.dtype,
+                    device=response_token_ids.device,
+                )
+                selected_ids[:, -response_length - 1 : -1, :] = response_token_ids
+                selected_ids_rmpad = index_first_axis(rearrange(selected_ids, "b s k -> (b s) k"), indices).long()
+
+                if self.use_ulysses_sp:
+                    input_ids_rmpad, position_ids_rmpad, pad_size = ulysses_pad_and_slice_inputs(
+                        input_ids_rmpad,
+                        position_ids_rmpad=position_ids_rmpad,
+                        sp_size=self.ulysses_sequence_parallel_size,
+                    )
+                    selected_ids_rmpad, _, _ = ulysses_pad_and_slice_inputs(
+                        selected_ids_rmpad.transpose(0, 1),
+                        position_ids_rmpad=None,
+                        sp_size=self.ulysses_sequence_parallel_size,
+                    )
+                    selected_ids_rmpad = selected_ids_rmpad.transpose(0, 1).long()
+
+                output = self.actor_module(
+                    input_ids=input_ids_rmpad,
+                    attention_mask=None,
+                    position_ids=position_ids_rmpad,
+                    **multi_modal_inputs,
+                    use_cache=False,
+                )
+                logits_rmpad = output.logits.squeeze(0)
+                logits_rmpad.div_(temperature)
+                logsumexp_values = torch.logsumexp(logits_rmpad, dim=-1, keepdim=True)
+                selected_log_probs_rmpad = torch.gather(logits_rmpad, dim=-1, index=selected_ids_rmpad) - logsumexp_values
+
+                if self.use_ulysses_sp:
+                    selected_log_probs_rmpad = gather_outpus_and_unpad(
+                        selected_log_probs_rmpad,
+                        gather_dim=0,
+                        unpad_dim=0,
+                        padding_size=pad_size,
+                    )
+                full_selected_log_probs = pad_input(
+                    hidden_states=selected_log_probs_rmpad,
+                    indices=indices,
+                    batch=batch_size,
+                    seqlen=seqlen,
+                )
+                return full_selected_log_probs[:, -response_length - 1 : -1, :]
+
+            output = self.actor_module(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                **multi_modal_inputs,
+                use_cache=False,
+            )
+            logits = output.logits
+            logits.div_(temperature)
+            logits = logits[:, -response_length - 1 : -1, :]
+            logsumexp_values = torch.logsumexp(logits, dim=-1, keepdim=True)
+            return torch.gather(logits, dim=-1, index=response_token_ids.long()) - logsumexp_values
 
     def _optimizer_step(self):
         assert self.config.grad_clip is not None
@@ -293,11 +442,26 @@ class DataParallelPPOActor(BasePPOActor):
 
         log_probs_lst = []
         entropy_lst = []
+        vopd_token_ids_lst = []
+        vopd_student_log_probs_lst = []
+        export_vopd_topk = self.config.get("export_vopd_topk", False)
+        vopd_topk = self.config.get("vopd_topk", 20) if export_vopd_topk else None
         for micro_batch in micro_batches:
             if isinstance(micro_batch, DataProto):
                 micro_batch = {**micro_batch.batch, **micro_batch.non_tensor_batch}
             with torch.no_grad():
-                entropy, log_probs = self._forward_micro_batch(micro_batch, temperature=temperature, calculate_entropy=calculate_entropy)
+                output = self._forward_micro_batch(
+                    micro_batch,
+                    temperature=temperature,
+                    calculate_entropy=calculate_entropy,
+                    vopd_topk=vopd_topk,
+                )
+                if export_vopd_topk:
+                    entropy, log_probs, vopd_token_ids, vopd_student_log_probs = output
+                    vopd_token_ids_lst.append(vopd_token_ids)
+                    vopd_student_log_probs_lst.append(vopd_student_log_probs)
+                else:
+                    entropy, log_probs = output
             log_probs_lst.append(log_probs)
             if calculate_entropy:
                 entropy_lst.append(entropy)
@@ -311,8 +475,53 @@ class DataParallelPPOActor(BasePPOActor):
             assert len(indices) == log_probs.size(0), f"{len(indices)} vs. {log_probs.size()}"
             revert_indices = torch.tensor(get_reverse_idx(indices), dtype=torch.long)
             log_probs = log_probs[revert_indices]
+            if export_vopd_topk:
+                vopd_token_ids = torch.concat(vopd_token_ids_lst, dim=0)[revert_indices]
+                vopd_student_log_probs = torch.concat(vopd_student_log_probs_lst, dim=0)[revert_indices]
+        elif export_vopd_topk:
+            vopd_token_ids = torch.concat(vopd_token_ids_lst, dim=0)
+            vopd_student_log_probs = torch.concat(vopd_student_log_probs_lst, dim=0)
 
+        if export_vopd_topk:
+            return log_probs, entropys, vopd_token_ids, vopd_student_log_probs
         return log_probs, entropys
+
+    @GPUMemoryLogger(role="dp actor", logger=logger)
+    def compute_selected_token_log_probs(self, data: DataProto) -> torch.Tensor:
+        self.actor_module.eval()
+
+        micro_batch_size = data.meta_info["micro_batch_size"]
+        temperature = data.meta_info["temperature"]
+        use_dynamic_bsz = data.meta_info["use_dynamic_bsz"]
+
+        select_keys = ["vopd_token_ids", "input_ids", "attention_mask", "position_ids"]
+        batch = data.select(batch_keys=select_keys).batch
+        has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch.keys()
+
+        if has_multi_modal_inputs:
+            num_micro_batches = data.batch.batch_size[0] // micro_batch_size
+            non_tensor_select_keys = ["multi_modal_inputs"]
+            micro_batches = data.select(select_keys, non_tensor_select_keys).chunk(num_micro_batches)
+        elif use_dynamic_bsz:
+            max_token_len = data.meta_info["max_token_len"] * self.ulysses_sequence_parallel_size
+            micro_batches, indices = rearrange_micro_batches(batch=batch, max_token_len=max_token_len)
+        else:
+            micro_batches = batch.split(micro_batch_size)
+
+        selected_log_probs_lst = []
+        for micro_batch in micro_batches:
+            if isinstance(micro_batch, DataProto):
+                micro_batch = {**micro_batch.batch, **micro_batch.non_tensor_batch}
+            selected_log_probs = self._forward_selected_token_log_probs(micro_batch, temperature=temperature)
+            selected_log_probs_lst.append(selected_log_probs)
+
+        selected_log_probs = torch.concat(selected_log_probs_lst, dim=0)
+        if use_dynamic_bsz:
+            indices = list(itertools.chain.from_iterable(indices))
+            assert len(indices) == selected_log_probs.size(0), f"{len(indices)} vs. {selected_log_probs.size()}"
+            revert_indices = torch.tensor(get_reverse_idx(indices), dtype=torch.long)
+            selected_log_probs = selected_log_probs[revert_indices]
+        return selected_log_probs
 
     @GPUMemoryLogger(role="dp actor", logger=logger)
     def update_policy(self, data: DataProto):
@@ -322,13 +531,17 @@ class DataParallelPPOActor(BasePPOActor):
         temperature = data.meta_info["temperature"]  # temperature must be in the data.meta_info to avoid silent error
         multi_turn = data.meta_info.get("multi_turn", False)
 
+        use_base_opd = self.config.get("use_base_opd_loss", False)
+        use_vopd = self.config.get("use_vopd_loss", False)
         use_myverl_opd = self.config.get("use_myverl_opd_loss", False)
         use_routed_opd = self.config.get("use_routed_opd_loss", False)
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "old_log_probs", "advantages"]
         if multi_turn or "loss_mask" in data.batch.keys():
             select_keys.append("loss_mask")
-        if self.config.use_kl_loss or use_myverl_opd:
+        if self.config.use_kl_loss or use_base_opd or use_vopd or use_myverl_opd:
             select_keys.append("ref_log_prob")
+        if use_vopd:
+            select_keys.append("vopd_kl_baseline")
         if use_routed_opd:
             for key in ["ref_log_prob", "math_ref_log_prob", "code_ref_log_prob", "math_opd_mask", "code_opd_mask"]:
                 if key in data.batch.keys():
@@ -501,6 +714,109 @@ class DataParallelPPOActor(BasePPOActor):
                         policy_loss = policy_loss + distill_loss * distill_coef
                         metrics["distillation/routed_loss"] = distill_loss.detach().item()
                         metrics["distillation/routed_loss_coef"] = distill_coef
+
+                    if use_base_opd:
+                        teacher_log_prob = data["ref_log_prob"]
+                        # Base OPD from Eq. (3): r_t = log pi_T(y_t|c_t) - log pi_theta(y_t|c_t),
+                        # used as a detached policy-gradient reward on sampled on-policy tokens.
+                        opd_rewards = (teacher_log_prob - log_prob).detach()
+                        valid_rewards = opd_rewards[response_mask.bool()]
+                        if valid_rewards.numel() > 0:
+                            metrics["base_opd/reward_mean"] = valid_rewards.mean().detach().item()
+                            metrics["base_opd/reward_min"] = valid_rewards.min().detach().item()
+                            metrics["base_opd/reward_max"] = valid_rewards.max().detach().item()
+
+                        reward_max_clamp = self.config.get("base_opd_reward_max_clamp", None)
+                        if reward_max_clamp is not None:
+                            opd_rewards = opd_rewards.clamp(
+                                min=-reward_max_clamp,
+                                max=reward_max_clamp,
+                            )
+
+                        if self.config.get("base_opd_use_policy_gradient", True):
+                            base_opd_loss, base_opd_clipfrac, base_opd_kl, base_opd_clipfrac_lower = compute_policy_loss(
+                                old_log_prob=old_log_prob,
+                                log_prob=log_prob,
+                                advantages=opd_rewards,
+                                response_mask=response_mask,
+                                cliprange=clip_ratio,
+                                cliprange_low=clip_ratio_low,
+                                cliprange_high=clip_ratio_high,
+                                clip_ratio_c=clip_ratio_c,
+                                loss_agg_mode=loss_agg_mode,
+                            )
+                            metrics["base_opd/pg_clipfrac"] = base_opd_clipfrac.detach().item()
+                            metrics["base_opd/ppo_kl"] = base_opd_kl.detach().item()
+                            metrics["base_opd/pg_clipfrac_lower"] = base_opd_clipfrac_lower.detach().item()
+                        else:
+                            base_opd_loss = agg_loss(
+                                loss_mat=-log_prob * opd_rewards,
+                                loss_mask=response_mask,
+                                loss_agg_mode=loss_agg_mode,
+                            )
+
+                        if not self.config.get("base_opd_use_task_rewards", False):
+                            policy_loss = policy_loss.new_tensor(0.0)
+                            base_opd_coef = 1.0
+                        else:
+                            base_opd_coef = self.config.get("base_opd_loss_coef", 1.0)
+                        policy_loss = policy_loss + base_opd_loss * base_opd_coef
+                        metrics["base_opd/loss"] = base_opd_loss.detach().item()
+                        metrics["base_opd/loss_coef"] = base_opd_coef
+
+                    if use_vopd:
+                        teacher_log_prob = data["ref_log_prob"]
+                        kl_baseline = data["vopd_kl_baseline"].detach()
+                        # vOPD from Eq. (10)/(15): advantage = r_t + KL(pi_theta || pi_T),
+                        # where the KL baseline is detached and independent of the sampled token.
+                        vopd_rewards = (teacher_log_prob - log_prob).detach() + kl_baseline
+                        valid_rewards = vopd_rewards[response_mask.bool()]
+                        valid_baseline = kl_baseline[response_mask.bool()]
+                        if valid_rewards.numel() > 0:
+                            metrics["vopd/reward_mean"] = valid_rewards.mean().detach().item()
+                            metrics["vopd/reward_min"] = valid_rewards.min().detach().item()
+                            metrics["vopd/reward_max"] = valid_rewards.max().detach().item()
+                        if valid_baseline.numel() > 0:
+                            metrics["vopd/kl_baseline_mean"] = valid_baseline.mean().detach().item()
+                            metrics["vopd/kl_baseline_max"] = valid_baseline.max().detach().item()
+
+                        reward_max_clamp = self.config.get("vopd_reward_max_clamp", None)
+                        if reward_max_clamp is not None:
+                            vopd_rewards = vopd_rewards.clamp(
+                                min=-reward_max_clamp,
+                                max=reward_max_clamp,
+                            )
+
+                        if self.config.get("vopd_use_policy_gradient", True):
+                            vopd_loss, vopd_clipfrac, vopd_kl, vopd_clipfrac_lower = compute_policy_loss(
+                                old_log_prob=old_log_prob,
+                                log_prob=log_prob,
+                                advantages=vopd_rewards,
+                                response_mask=response_mask,
+                                cliprange=clip_ratio,
+                                cliprange_low=clip_ratio_low,
+                                cliprange_high=clip_ratio_high,
+                                clip_ratio_c=clip_ratio_c,
+                                loss_agg_mode=loss_agg_mode,
+                            )
+                            metrics["vopd/pg_clipfrac"] = vopd_clipfrac.detach().item()
+                            metrics["vopd/ppo_kl"] = vopd_kl.detach().item()
+                            metrics["vopd/pg_clipfrac_lower"] = vopd_clipfrac_lower.detach().item()
+                        else:
+                            vopd_loss = agg_loss(
+                                loss_mat=-log_prob * vopd_rewards,
+                                loss_mask=response_mask,
+                                loss_agg_mode=loss_agg_mode,
+                            )
+
+                        if not self.config.get("vopd_use_task_rewards", False):
+                            policy_loss = policy_loss.new_tensor(0.0)
+                            vopd_coef = 1.0
+                        else:
+                            vopd_coef = self.config.get("vopd_loss_coef", 1.0)
+                        policy_loss = policy_loss + vopd_loss * vopd_coef
+                        metrics["vopd/loss"] = vopd_loss.detach().item()
+                        metrics["vopd/loss_coef"] = vopd_coef
 
                     if use_myverl_opd:
                         teacher_log_prob = data["ref_log_prob"]
